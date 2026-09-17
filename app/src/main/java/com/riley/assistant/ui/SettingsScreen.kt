@@ -35,6 +35,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -49,12 +50,15 @@ import com.riley.assistant.calendar.CalendarInfo
 import com.riley.assistant.calendar.CalendarRepo
 import com.riley.assistant.data.Settings
 import com.riley.assistant.data.Store
+import com.riley.assistant.link.LinkService
+import com.riley.assistant.link.Notifier
 import com.riley.assistant.listen.ModelStatus
 import com.riley.assistant.listen.WakeModel
 import com.riley.assistant.voice.RileyVoice
 import com.riley.assistant.whatsapp.WhatsApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -69,6 +73,7 @@ fun SettingsScreen(settings: Settings, voice: RileyVoice, modifier: Modifier = M
         CalendarSection(settings)
         WhatsAppSection()
         BriefSection(settings)
+        PhoneSection(settings)
         RemindersSection(settings)
 
         SectionTitle("KILL SWITCH")
@@ -360,6 +365,82 @@ private fun BriefSection(settings: Settings) {
         }
     }
     OutlinedButton(onClick = { Alerts.runBriefNow(context) }) { Text("BRIEF ME NOW") }
+}
+
+@Composable
+private fun PhoneSection(settings: Settings) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val linkUp by LinkService.listening.collectAsState()
+    var callsOn by remember { mutableStateOf(settings.callsEnabled) }
+    var forMeetings by remember { mutableStateOf(settings.callForMeetings) }
+    var forTasks by remember { mutableStateOf(settings.callForUrgentTasks) }
+    var escalate by remember { mutableFloatStateOf(settings.escalateMinutes.toFloat()) }
+    var testResult by remember { mutableStateOf<String?>(null) }
+    val address = remember { Notifier.localAddress() ?: "not on Wi-Fi" }
+
+    SectionTitle("CALLS TO MY PHONE")
+    Text(
+        "For things that can't slip, Riley rings your phone: it keeps ringing back every few minutes until you " +
+            "answer, up to three times. Install \"Riley Phone\" on your Android phone and pair it with the three " +
+            "lines below.",
+        color = TextDim,
+    )
+    ToggleRow("Let Riley ring my phone", callsOn) {
+        callsOn = it
+        settings.callsEnabled = it
+        if (it) LinkService.start(context) else LinkService.stop(context)
+    }
+    if (!callsOn) return
+
+    ToggleRow("Ring before meetings", forMeetings) {
+        forMeetings = it
+        settings.callForMeetings = it
+    }
+    ToggleRow("Ring for urgent tasks", forTasks) {
+        forTasks = it
+        settings.callForUrgentTasks = it
+    }
+    Text("Ring back after ${escalate.toInt()} minutes with no answer", color = TextDim)
+    Slider(
+        value = escalate,
+        onValueChange = { escalate = it },
+        onValueChangeFinished = { settings.escalateMinutes = escalate.toInt() },
+        valueRange = 2f..15f,
+        steps = 12,
+    )
+
+    SectionTitle("PAIRING")
+    Text("Channel: ${settings.phoneTopic}", color = TextMain)
+    Text("Code: ${settings.linkToken}", color = TextMain)
+    Text("This tablet: $address:${settings.linkPort}", color = TextMain)
+    Text(
+        if (linkUp) {
+            "Phone link: on. Talking to Riley works while both are on this Wi-Fi."
+        } else {
+            "Phone link: off. Rings still work; talking back needs the link."
+        },
+        color = if (linkUp) TextDim else Danger,
+    )
+    Text(
+        "The channel name is also its password, so keep it private. Only the one-line headline crosses the public " +
+            "relay; what you say to Riley stays on your Wi-Fi.",
+        color = TextDim,
+    )
+    OutlinedButton(onClick = {
+        testResult = "Ringing…"
+        scope.launch {
+            val failure = Notifier.send(
+                context,
+                Notifier.KIND_CALL,
+                "Test call from Riley",
+                "Comms check, ${settings.callName}. This is a test.",
+                "test",
+            )
+            testResult = failure?.let { "Failed: $it" } ?: "Sent. Your phone should ring."
+        }
+    }) { Text("TEST CALL MY PHONE") }
+    testResult?.let { Text(it, color = if (it.startsWith("Failed")) Danger else TextDim) }
 }
 
 @Composable

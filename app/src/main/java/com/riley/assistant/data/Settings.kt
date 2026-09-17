@@ -101,6 +101,63 @@ class Settings(context: Context) {
             prefs.edit().putStringSet("announced_meetings", value).apply()
         }
 
+    /** Riley may ring the owner's phone for urgent things. */
+    var callsEnabled: Boolean
+        get() = prefs.getBoolean("calls_enabled", true)
+        set(value) {
+            prefs.edit().putBoolean("calls_enabled", value).apply()
+        }
+
+    var callForMeetings: Boolean
+        get() = prefs.getBoolean("call_meetings", true)
+        set(value) {
+            prefs.edit().putBoolean("call_meetings", value).apply()
+        }
+
+    var callForUrgentTasks: Boolean
+        get() = prefs.getBoolean("call_urgent_tasks", true)
+        set(value) {
+            prefs.edit().putBoolean("call_urgent_tasks", value).apply()
+        }
+
+    /** How long Riley waits for an answer before ringing again. */
+    var escalateMinutes: Int
+        get() = prefs.getInt("escalate_minutes", 5)
+        set(value) {
+            prefs.edit().putInt("escalate_minutes", value).apply()
+        }
+
+    /** Push relay that carries the ring to the phone. Change it if you self-host ntfy. */
+    var pushServer: String
+        get() = prefs.getString("push_server", null)?.takeIf { it.isNotBlank() } ?: "https://ntfy.sh"
+        set(value) = putString("push_server", value.trimEnd('/'))
+
+    /** Secret channel name the phone listens on. Generated once; acts as the address and the password. */
+    val phoneTopic: String
+        get() = prefs.getString("phone_topic", null) ?: newSecret(24).also { putString("phone_topic", it) }
+
+    /** Shared secret proving a ring really came from this tablet, and letting the phone talk to it. */
+    val linkToken: String
+        get() = prefs.getString("link_token", null) ?: newSecret(32).also { putString("link_token", it) }
+
+    /** Port the phone talks to Riley on over the home Wi-Fi. */
+    var linkPort: Int
+        get() = prefs.getInt("link_port", 8787)
+        set(value) {
+            prefs.edit().putInt("link_port", value).apply()
+        }
+
+    /** The urgent item Riley is currently chasing, as "id|attempt|headline|spoken", or "". */
+    var pendingCall: String
+        get() = prefs.getString("pending_call", null).orEmpty()
+        set(value) = putString("pending_call", value)
+
+    private fun newSecret(chars: Int): String {
+        val alphabet = "abcdefghijkmnopqrstuvwxyz23456789"
+        val random = java.security.SecureRandom()
+        return (1..chars).map { alphabet[random.nextInt(alphabet.length)] }.joinToString("")
+    }
+
     @android.annotation.SuppressLint("ApplySharedPref") // must hit disk before the uninstall prompt
     fun wipe() {
         prefs.edit().clear().commit()

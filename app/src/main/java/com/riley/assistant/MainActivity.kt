@@ -33,6 +33,7 @@ import com.riley.assistant.data.Settings
 import com.riley.assistant.data.Store
 import com.riley.assistant.data.Task
 import com.riley.assistant.killswitch.KillSwitch
+import com.riley.assistant.link.LinkService
 import com.riley.assistant.listen.ListenService
 import com.riley.assistant.listen.ListenState
 import com.riley.assistant.listen.WakeModel
@@ -82,6 +83,7 @@ class MainActivity : ComponentActivity() {
         reload()
         Reminders.rescheduleAll(this)
         Alerts.rescheduleAll(this)
+        LinkService.start(this)
         WakeModel.refresh(this)
         askForNotifications()
         lifecycleScope.launch {

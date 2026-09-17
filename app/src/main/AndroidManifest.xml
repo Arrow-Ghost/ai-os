@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Meetings -->
     <uses-permission android:name="android.permission.READ_CALENDAR" />
@@ -49,6 +50,12 @@
             android:name=".listen.ListenService"
             android:exported="false"
             android:foregroundServiceType="microphone" />
+
+        <!-- Lets the paired phone talk to Riley over the home Wi-Fi. -->
+        <service
+            android:name=".link.LinkService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <receiver
             android:name=".reminders.ReminderReceiver"

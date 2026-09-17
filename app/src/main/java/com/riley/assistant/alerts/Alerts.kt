@@ -21,6 +21,7 @@ import com.riley.assistant.RileyApp
 import com.riley.assistant.calendar.CalendarRepo
 import com.riley.assistant.data.Settings
 import com.riley.assistant.killswitch.KillSwitch
+import com.riley.assistant.link.Escalation
 import com.riley.assistant.voice.RileyVoice
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +41,8 @@ object Alerts {
     private const val SLOT_MEETING = 9001
     private const val SLOT_SYNC = 9002
     private const val SLOT_BRIEF = 9003
+    private const val SLOT_ESCALATE = 9004
+    const val ACTION_ESCALATE = "com.riley.assistant.ESCALATE"
 
     const val ACTION_MEETING = "com.riley.assistant.MEETING_HEADS_UP"
     const val ACTION_SYNC = "com.riley.assistant.CALENDAR_SYNC"
@@ -59,8 +62,24 @@ object Alerts {
         scheduleBrief(context)
     }
 
+    /** Re-ring the phone if the owner hasn't answered by [at]. */
+    fun scheduleEscalation(context: Context, at: Long) {
+        cancelSlot(context, SLOT_ESCALATE, ACTION_ESCALATE)
+        if (KillSwitch.detonated) return
+        setAlarm(context, SLOT_ESCALATE, Intent(context, AlertReceiver::class.java).setAction(ACTION_ESCALATE), at, exact = true)
+    }
+
+    fun cancelEscalation(context: Context) {
+        cancelSlot(context, SLOT_ESCALATE, ACTION_ESCALATE)
+    }
+
     fun cancelAll(context: Context) {
-        listOf(SLOT_MEETING to ACTION_MEETING, SLOT_SYNC to ACTION_SYNC, SLOT_BRIEF to ACTION_BRIEF).forEach { (slot, action) ->
+        listOf(
+            SLOT_MEETING to ACTION_MEETING,
+            SLOT_SYNC to ACTION_SYNC,
+            SLOT_BRIEF to ACTION_BRIEF,
+            SLOT_ESCALATE to ACTION_ESCALATE,
+        ).forEach { (slot, action) ->
             pending(context, slot, action, PendingIntent.FLAG_NO_CREATE)?.let {
                 context.getSystemService(AlarmManager::class.java).cancel(it)
                 it.cancel()
@@ -190,6 +209,7 @@ class AlertReceiver : BroadcastReceiver() {
         val app = context.applicationContext
         when (intent.action) {
             Alerts.ACTION_SYNC -> Alerts.rescheduleAll(app)
+            Alerts.ACTION_ESCALATE -> Escalation.onAlarm(app)
             Alerts.ACTION_BRIEF -> {
                 Alerts.runBriefNow(app)
                 Alerts.scheduleBrief(app)
@@ -221,6 +241,7 @@ class AlertReceiver : BroadcastReceiver() {
         val place = if (event.location.isNotBlank()) " Location: ${event.location}." else ""
         val callName = Settings(context).callName
         Alerts.notify(context, Alerts.NOTIFY_MEETING, "Riley · Meeting $whenText", "${event.title}.$place")
+        Escalation.considerMeeting(context, event, minutes)
         // Receivers get ~10 seconds; keep the spoken line short.
         withTimeoutOrNull(8_000) { Alerts.speak(context, "Heads up, $callName. ${event.title}, $whenText.$place") }
     }

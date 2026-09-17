@@ -12,13 +12,19 @@ import com.riley.assistant.RileyApp
 import com.riley.assistant.alerts.Alerts
 import com.riley.assistant.data.Settings
 import com.riley.assistant.data.Store
+import com.riley.assistant.link.LinkService
+import com.riley.assistant.link.Notifier
 import com.riley.assistant.listen.ListenService
 import com.riley.assistant.reminders.Reminders
 import com.riley.assistant.voice.RileyVoice
 import com.riley.assistant.whatsapp.MessageListener
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 
@@ -52,6 +58,15 @@ object KillSwitch {
         RileyVoice.release()
         runCatching { ListenService.stop(app) }
         runCatching { MessageListener.shutDown(app) } // stops reading WhatsApp notifications for good
+        runCatching { LinkService.stop(app) }
+        // Tell the phone companion to wipe itself too. Best effort: it may be offline.
+        runCatching {
+            val settings = Settings(app)
+            val signature = Notifier.signature(settings.linkToken, Notifier.KIND_DETONATE, "", "Code Red")
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                Notifier.sendRaw(app, settings, Notifier.KIND_DETONATE, "Code Red", "Detonating.", "", signature)
+            }
+        }
         runCatching { Reminders.cancelAll(app) }
         runCatching { Alerts.cancelAll(app) } // meeting heads-ups, calendar re-checks, morning brief
         notifications.cancelAll()

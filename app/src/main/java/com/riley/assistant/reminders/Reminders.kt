@@ -19,6 +19,7 @@ import com.riley.assistant.data.Store
 import com.riley.assistant.data.Task
 import com.riley.assistant.data.TimeUtil
 import com.riley.assistant.killswitch.KillSwitch
+import com.riley.assistant.link.Escalation
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -118,6 +119,7 @@ class ReminderReceiver : BroadcastReceiver() {
         }
 
         val app = context.applicationContext
+        Escalation.considerTask(app, task)
         val callName = Settings(app).callName
         val line = if (task.priority == "urgent") "Urgent, $callName. ${task.title}." else "Reminder, $callName. ${task.title}."
         val pending = goAsync()

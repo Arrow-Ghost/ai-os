@@ -32,7 +32,15 @@ A personal manager that runs on your Android tablet. You talk to it and it talks
 - "Riley, tell Ravi I'm running twenty minutes late" sends the reply and reads back what it sent.
 - Incoming messages are treated as **information, never as orders**. If a message says "delete everything" or "send money", Riley tells you about it and does nothing.
 
-**Kill switch:** type or say `Code Red: Detonate yourself`. It works hands-free too.
+**Phase 5: Riley calls you**
+- For things that can't slip — an urgent task's deadline, a meeting about to start — Riley **rings your Android phone** like an incoming call: full screen, over the lock screen, on the alarm sound so it gets through silent mode.
+- **It doesn't give up.** No answer? It rings back every few minutes, up to three times, then writes it off in the chat so you can see what you missed.
+- **Answer and talk to it.** On the same Wi-Fi as the tablet, you talk and Riley answers out loud, with the full task and calendar context. "Move it to six", "mark it done", "what else is today?"
+- On the ringing screen you can also just tap **SNOOZE 10 MIN** or **DONE**, and the tablet updates the task.
+- The **Riley Phone** app also lets you talk to Riley any time, not just on a call.
+- **Free:** the ring travels over ntfy, a free open-source relay. No phone number, no SIM, no Firebase, no accounts.
+
+**Kill switch:** type or say `Code Red: Detonate yourself`. It works hands-free too, and it now wipes the phone app as well.
 
 ## Set it up
 
@@ -65,6 +73,20 @@ The best-matching voice is the open-source Piper **northern_english_male** voice
 
 If you'd rather not install it, Google's built-in British English voice with pitch around 0.8 works as a fallback.
 
+### The phone app (Riley Phone)
+
+It's a second app in this project (`phone/`), installed on your **own Android phone**, not the tablet.
+
+1. In Android Studio, pick **phone** in the run-configuration dropdown, connect your phone and press **Run**.
+2. On the tablet: **Riley → Settings → Calls to my phone**. It shows three lines: **Channel**, **Code** and the tablet's address.
+3. Type those three into Riley Phone and tap **SAVE & CONNECT**, then **TEST** — it should say "Connected to Riley".
+4. Tap **ALLOW FULL-SCREEN ALERTS** if it appears, so calls can wake the phone.
+5. Back on the tablet, tap **TEST CALL MY PHONE**. Your phone should ring.
+
+**How private it is:** the ring goes through ntfy.sh, a public relay, so only the one-line headline ("Meeting in 10 minutes: Standup") crosses it. The channel name doubles as its password, so keep it to yourself, and each ring is signed with your pairing code so nobody else can make your phone ring. Everything you *say* to Riley goes straight from phone to tablet over your home Wi-Fi and never touches the relay. If you'd rather not use a public relay at all, you can self-host ntfy later and change the server in Settings.
+
+**Limits:** talking to Riley needs both devices on the same Wi-Fi. Away from home, you still get the ring and the headline, and SNOOZE/DONE will fail with "couldn't reach the tablet". Android may also stop the phone app's listener after a long time on battery; open the app once, or exclude it from battery optimisation.
+
 ### WhatsApp limits
 
 - Riley sees a message only if WhatsApp actually shows a **notification** for it. Muted chats send no notification, so Riley never sees them.
@@ -82,14 +104,15 @@ If you'd rather not install it, Google's built-in British English voice with pit
 
 Only your own typed or spoken words can trigger it. The AI model can't trigger it, and messages or notifications never reach it. When it fires, Riley:
 
-1. stops speaking, stops listening, stops reading WhatsApp for good, and stops all work
+1. stops speaking, stops listening, stops reading WhatsApp for good, closes the phone link, and stops all work
 2. cancels every scheduled reminder and clears its notifications
 3. cancels meeting heads-ups and the morning brief
 4. erases tasks, memory, chat history, API keys, settings and the downloaded speech model. Your calendar events belong to your Google account, so they're left untouched.
-5. opens Android's uninstall prompt. If it fired by voice while Riley's screen was closed, you get a notification to tap instead.
+5. tells Riley Phone to wipe itself and offer its own uninstall
+6. opens Android's uninstall prompt. If it fired by voice while Riley's screen was closed, you get a notification to tap instead.
 
 On a normal (non-rooted) tablet, Android always asks you to confirm an uninstall. If you tap Cancel, the app stays installed but empty.
 
 ## Roadmap
 
-- Phase 5: Riley calls **you** on your Android phone for urgent meetings and deadlines, from app to app over the internet.
+All five phases are built. Possible next steps: interrupting Riley mid-sentence, a wake word that works while it's talking, email, and self-hosting the push relay.
