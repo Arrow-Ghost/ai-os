@@ -14,6 +14,9 @@ Pillow>=10.0             # screen.* -- downscales screenshots to save tokens
 # --- tests ---
 pytest>=8.0
 
+# --- Track A: features/sys_tools.py (sys.processes, sys.disk, sys.battery) ---
+psutil>=6.0
+
 # --- system packages, not pip (Ubuntu/KDE) -----------------------------
 #   libnotify-bin     notify.send
 #   wl-clipboard      clipboard.*  (xclip on X11)
@@ -26,4 +29,4 @@ pytest>=8.0
 #   playwright>=1.47        installed by browser-use
 #   mss>=9.0                screenshots on X11 ONLY -- does not work on Wayland
 #   watchdog>=4.0           filesystem events
-#   psutil>=6.0             process and system state
+#   faster-whisper>=1.0     local speech to text, runs on your GPU

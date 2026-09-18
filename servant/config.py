@@ -163,7 +163,7 @@ def load_config(policy_file: str | Path | None = None) -> Config:
         except ImportError:
             print(f"[config] {candidate.name} found but PyYAML is not installed; using defaults.")
         else:
-            loaded = yaml.safe_load(candidate.read_text()) or {}
+            loaded = yaml.safe_load(candidate.read_text(encoding="utf-8")) or {}
             if not isinstance(loaded, dict):
                 raise ValueError(f"{candidate} must contain a YAML mapping")
             data = _deep_merge(data, loaded)
@@ -176,7 +176,7 @@ def _load_dotenv(path: Path) -> None:
     """Minimal .env reader so we do not depend on python-dotenv."""
     if not path.exists():
         return
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         line = line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue

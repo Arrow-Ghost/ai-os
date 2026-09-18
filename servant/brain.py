@@ -22,6 +22,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
 import time
 from pathlib import Path
 from typing import Any, Protocol
@@ -37,7 +38,10 @@ Rules you follow without exception:
 - State your confidence honestly. Low confidence is useful information, not a failure.
 - You cannot spend money, install software, or modify your own code. Do not try.
 
-Work one step at a time. After each tool result, decide the next step."""
+Work one step at a time. After each tool result, decide the next step.
+Call exactly one tool per turn. Before a tool call, write one short line saying why, ending with
+your confidence, e.g. "Listing the folder first. confidence: 0.8". When the goal is done, or you
+need the human, reply in plain text with no tool call."""
 
 
 class Brain(Protocol):
@@ -45,6 +49,10 @@ class Brain(Protocol):
     def complete(self, prompt: str, *, smart: bool = False) -> str: ...
     def see(self, image_path: str | Path, prompt: str) -> str: ...
     def transcribe(self, audio_path: str | Path) -> str: ...
+
+
+class BrainUnavailable(RuntimeError):
+    """The brain cannot answer: no key, no network, bad model name, rate limit."""
 
 
 # --------------------------------------------------------------------------
@@ -63,9 +71,9 @@ class OfflineBrain:
         if self.script:
             return self.script.pop(0)
         return Finish(
-            "Offline brain: no plan available. Set brain.provider=groq in "
-            "config/policy.yaml (and a key in .env) to think for real, or run a "
-            "tool directly with `python -m servant call <tool> k=v`."
+            "Offline brain: no plan available. Add GROQ_API_KEY to .env (brain.provider "
+            "auto or groq in config/policy.yaml) to think for real, or run a tool directly "
+            "with `python -m servant call <tool> k=v`."
         )
 
     def complete(self, prompt: str, *, smart: bool = False) -> str:  # noqa: ARG002
@@ -86,25 +94,31 @@ class OfflineBrain:
 # --------------------------------------------------------------------------
 
 class GroqBrain:
-    """Groq via the OpenAI-compatible API. Model names live in config."""
+    """Groq via the OpenAI-compatible API. Model names live in config.
 
-    def __init__(self, config, redactor):
+    `client` is for tests: pass a fake and no key or network is needed.
+    """
+
+    def __init__(self, config, redactor, *, client=None):
         self._keys = _load_keys(config)
-        if not self._keys:
-            raise RuntimeError(
+        if client is None and not self._keys:
+            raise BrainUnavailable(
                 "No Groq key found. Copy .env.example to .env and set GROQ_API_KEY "
-                "(or GROQ_API_KEYS for several), or set brain.provider: offline "
+                "(or GROQ_API_KEYS for several), or set brain.provider: auto / offline "
                 "in config/policy.yaml."
             )
-        try:
-            from openai import OpenAI  # type: ignore
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError("pip install openai -- required for the groq provider") from exc
-
-        self._OpenAI = OpenAI
         self._base_url = config.get("brain.base_url")
         self._key_index = 0
-        self._client = self._make_client()
+        if client is not None:
+            self._OpenAI = None
+            self._client = client
+        else:
+            try:
+                from openai import OpenAI  # type: ignore
+            except ImportError as exc:  # pragma: no cover
+                raise BrainUnavailable("pip install openai -- required for the groq provider") from exc
+            self._OpenAI = OpenAI
+            self._client = self._make_client()
 
         self._redactor = redactor
         self.model_fast = config.get("brain.model_fast")
@@ -112,44 +126,40 @@ class GroqBrain:
         self.model_vision = config.get("brain.model_vision")
         self.model_transcribe = config.get("brain.model_transcribe")
         self.temperature = float(config.get("brain.temperature", 0.2))
-        self.max_retries = int(config.get("brain.max_retries", 3))
+        self.max_retries = max(1, int(config.get("brain.max_retries", 3)))
         self.max_image_bytes = int(config.get("brain.max_image_bytes", 4_000_000))
         self.calls = 0
         self.rotations = 0
 
     # -- public ------------------------------------------------------------
     def decide(self, goal: str, history: list[dict], tools: list[dict]) -> Decision:
+        to_wire, from_wire = _name_maps(tools)
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": f"Goal: {goal}"},
-            *history,
-            {
-                "role": "system",
-                "content": (
-                    "Call exactly one tool for the next step, or reply in plain text if the "
-                    "goal is complete or you need the human. When you call a tool, begin your "
-                    "text with a one-line reason and a confidence like 'confidence: 0.8'."
-                ),
-            },
+            *_rename_history(history, to_wire),
         ]
-        response = self._chat(messages, tools=tools, smart=True)
+        response = self._chat(messages, tools=_rename_tools(tools, to_wire), smart=True)
         choice = response.choices[0].message
+        text = (choice.content or "").strip()
 
         calls = getattr(choice, "tool_calls", None)
         if calls:
-            call = calls[0]
+            call = calls[0]  # one step at a time; parallel extras are dropped
             try:
                 args = json.loads(call.function.arguments or "{}")
             except json.JSONDecodeError:
                 args = {}
-            text = choice.content or ""
-            return ToolCall(
-                tool=call.function.name,
-                args=args,
-                rationale=text.strip()[:400],
+            decision = ToolCall(
+                tool=from_wire.get(call.function.name, call.function.name),
+                args=args if isinstance(args, dict) else {},
+                rationale=text[:400],
                 confidence=_parse_confidence(text),
             )
-        return Finish((choice.content or "").strip() or "(no answer)")
+            if getattr(call, "id", None):
+                decision.id = call.id
+            return decision
+        return Finish(text or "(no answer)")
 
     def complete(self, prompt: str, *, smart: bool = False) -> str:
         response = self._chat(
@@ -191,7 +201,7 @@ class GroqBrain:
             raise FileNotFoundError(f"no such audio file: {path}")
 
         last: Exception | None = None
-        for _ in range(len(self._keys)):
+        for _ in range(max(1, len(self._keys))):
             try:
                 self.calls += 1
                 with path.open("rb") as fh:
@@ -203,15 +213,17 @@ class GroqBrain:
                 last = exc
                 if not self._rotate_key(exc):
                     break
-        raise RuntimeError(f"transcription failed: {last}")
+        raise BrainUnavailable(f"transcription failed: {_describe(last)}")
 
     # -- internals ---------------------------------------------------------
     def _make_client(self):
-        return self._OpenAI(api_key=self._keys[self._key_index], base_url=self._base_url)
+        client = self._OpenAI(api_key=self._keys[self._key_index], base_url=self._base_url)
+        # The SDK retries on its own by default; ours (with key rotation) would stack on top.
+        return client.with_options(max_retries=0) if hasattr(client, "with_options") else client
 
     def _rotate_key(self, exc: Exception) -> bool:
         """Move to the next key if this looks like a rate limit. True if rotated."""
-        if len(self._keys) < 2 or not _is_rate_limit(exc):
+        if self._OpenAI is None or len(self._keys) < 2 or not _is_rate_limit(exc):
             return False
         self._key_index = (self._key_index + 1) % len(self._keys)
         self._client = self._make_client()
@@ -244,14 +256,14 @@ class GroqBrain:
             try:
                 self.calls += 1
                 return self._client.chat.completions.create(**kwargs)
-            except Exception as exc:  # noqa: BLE001 -- retry rate limits and transient errors
+            except Exception as exc:  # noqa: BLE001
                 last = exc
                 if self._rotate_key(exc):
                     continue  # fresh key, try again immediately
-                if attempt == attempts - 1:
+                if not _retryable(exc) or attempt == attempts - 1:
                     break
-                time.sleep(min(2 ** attempt, 8))
-        raise RuntimeError(f"Groq call failed ({attempts} attempts, {len(self._keys)} key(s)): {last}")
+                time.sleep(min(2 ** attempt, 8))  # Groq free tier rate-limits hard; back off
+        raise BrainUnavailable(f"Groq call failed ({len(self._keys)} key(s)): {_describe(last)}")
 
 
 def _load_keys(config) -> list[str]:
@@ -277,11 +289,63 @@ def _is_rate_limit(exc: Exception) -> bool:
     return "rate limit" in text or "429" in text or "quota" in text
 
 
-def _parse_confidence(text: str) -> float:
-    import re
+def _retryable(exc: Exception) -> bool:
+    """Retry rate limits, server errors, dropped connections, and Groq's
+    `tool_use_failed` (the model emitted a malformed call; a retry usually
+    fixes it). A bad key or a bad request fails the same way every time."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        return True  # connection error or timeout
+    if status == 429 or status >= 500:
+        return True
+    return status == 400 and "tool_use_failed" in str(exc)
 
-    match = re.search(r"confidence[:\s]+([01](?:\.\d+)?)", text or "", re.IGNORECASE)
-    if not match:
+
+def _describe(exc: Exception | None) -> str:
+    hints = {
+        401: "the API key was rejected -- check GROQ_API_KEY in .env",
+        404: "unknown model -- check the brain.model_* names in config/policy.yaml",
+        429: "rate limited -- wait a minute, add keys to GROQ_API_KEYS, or lower budgets.max_llm_calls",
+    }
+    status = getattr(exc, "status_code", None)
+    return hints.get(status, f"{type(exc).__name__}: {str(exc)[:300]}")
+
+
+# -- tool names on the wire -------------------------------------------------
+# Function names must match ^[a-zA-Z0-9_-]{1,64}$ and ours are dotted
+# ("files.list"). The brain translates at the boundary, in both directions.
+
+def _wire_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "__", name)[:64]
+
+
+def _name_maps(tools: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
+    to_wire = {t["function"]["name"]: _wire_name(t["function"]["name"]) for t in tools}
+    from_wire = {wire: real for real, wire in to_wire.items()}
+    if len(from_wire) != len(to_wire):
+        raise ValueError("two tool names collide once made API-safe; rename one")
+    return to_wire, from_wire
+
+
+def _rename_tools(tools: list[dict], to_wire: dict[str, str]) -> list[dict]:
+    return [{**t, "function": {**t["function"], "name": to_wire[t["function"]["name"]]}} for t in tools]
+
+
+def _rename_history(history: list[dict], to_wire: dict[str, str]) -> list[dict]:
+    out = []
+    for msg in history:
+        if msg.get("tool_calls"):
+            msg = {**msg, "tool_calls": [
+                {**c, "function": {**c["function"], "name": to_wire.get(c["function"]["name"], _wire_name(c["function"]["name"]))}}
+                for c in msg["tool_calls"]
+            ]}
+        out.append(msg)
+    return out
+
+
+def _parse_confidence(text: str) -> float:
+    match = re.search(r"confidence[:\s]+([01]?(?:\.\d+)?)", text or "", re.IGNORECASE)
+    if not match or not match.group(1).strip("."):
         return 0.5
     return max(0.0, min(1.0, float(match.group(1))))
 
@@ -289,8 +353,10 @@ def _parse_confidence(text: str) -> float:
 def build_brain(config, redactor):
     """Factory driven by config. Unknown providers fail loudly, not silently."""
     provider = (config.get("brain.provider") or "offline").lower()
+    if provider == "auto":  # groq when a key is present, offline otherwise
+        provider = "groq" if _load_keys(config) else "offline"
     if provider == "offline":
         return OfflineBrain()
     if provider == "groq":
         return GroqBrain(config, redactor)
-    raise ValueError(f"unknown brain.provider: {provider!r} (expected 'groq' or 'offline')")
+    raise ValueError(f"unknown brain.provider: {provider!r} (expected 'auto', 'groq' or 'offline')")

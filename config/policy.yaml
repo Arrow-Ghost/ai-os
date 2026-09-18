@@ -8,9 +8,10 @@
 # =====================================================================
 
 brain:
-  # "offline" needs no API key and returns scripted answers -- use it while
-  # building features. Switch to "groq" when you want real reasoning.
-  provider: groq
+  # "auto"    groq when GROQ_API_KEY / GROQ_API_KEYS is set in .env, offline otherwise
+  # "groq"    always groq; fails at startup without a key
+  # "offline" never calls a network; scripted answers only (what tests use)
+  provider: auto
   base_url: https://api.groq.com/openai/v1
   model_fast: openai/gpt-oss-20b      # routing, classification, short steps
   model_smart: openai/gpt-oss-120b    # planning and anything that needs care
@@ -78,6 +79,29 @@ redaction:
     - ~/.aws
     - ~/.gnupg
     - .env
+
+# Settings individual features read. Still yours: the agent never writes them.
+features:
+  shell:
+    # The ONLY commands shell.run may execute (it still asks you every time).
+    # Each entry is a token prefix: "git status" allows `git status -s` but
+    # not `git push`. Never add a bare interpreter ("python", "node", "bash",
+    # "powershell") -- that allows any code at all via -c / -e.
+    allowlist:
+      - git status
+      - git log
+      - git diff
+      - python --version
+      - py --version
+      - pytest
+      - npm test
+      - npm run test
+      - npm run lint
+      - node --version
+    max_output_chars: 4000
+  code:
+    # code.apply_patch refuses to run while one of these is checked out.
+    protected_branches: [main, master]
 
 paths:
   state_dir: .servant

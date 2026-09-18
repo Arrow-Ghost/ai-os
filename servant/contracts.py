@@ -12,7 +12,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 
 # --------------------------------------------------------------------------
@@ -59,6 +59,8 @@ class ParamSpec:
 
     def to_json_schema(self) -> dict:
         schema: dict = {"type": self.type}
+        if self.type == "array":
+            schema["items"] = {"type": "string"}  # strict validators reject a bare array
         if self.description:
             schema["description"] = self.description
         return schema
@@ -115,7 +117,7 @@ class Finish:
     message: str
 
 
-Decision = ToolCall | Finish
+Decision = Union[ToolCall, Finish]  # not `|`: this line runs on import, and 3.9 has no type union
 
 
 # --------------------------------------------------------------------------
