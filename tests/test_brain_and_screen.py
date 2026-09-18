@@ -108,3 +108,19 @@ def test_backend_that_writes_nothing_is_an_error(agent, feature, monkeypatch):
     result = agent.call_tool("screen.capture", {"region": "full"})
     assert result.status is Status.ERROR
     assert "no image" in result.error
+
+
+def test_oversized_request_does_not_rotate_keys():
+    """413 'too large' is a property of the request, not the key.
+
+    Rotating would burn every key on the identical oversized payload.
+    """
+    from servant.brain import _is_rate_limit
+
+    too_large = Exception(
+        "Error code: 413 - Request too large for model `openai/gpt-oss-20b` on "
+        "tokens per minute (TPM): Limit 8000, Requested 30077, please reduce "
+        "your message size and try again."
+    )
+    assert _is_rate_limit(too_large) is False
+    assert _is_rate_limit(Exception("Error code: 429 - rate limit reached")) is True

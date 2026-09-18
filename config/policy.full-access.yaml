@@ -95,6 +95,9 @@ redaction:
     - 'gsk_[A-Za-z0-9_\-]{16,}'
     - 'AIza[A-Za-z0-9_\-]{30,}'
     - 'AKIA[0-9A-Z]{16}'
+    # Gmail app password: 16 lowercase letters, usually shown in 4 groups.
+    # Anchored on a nearby keyword so ordinary four-word prose survives.
+    - '(?i)\b(?:app[ -]?password|gmail|smtp|imap)\b[^\n]{0,30}?\b[a-z]{4} ?[a-z]{4} ?[a-z]{4} ?[a-z]{4}\b'
     - 'ghp_[A-Za-z0-9]{36}'
     - '(?i)\b(api[_-]?key|secret|password|passwd|token)\b\s*[:=]\s*\S+'
   forbidden_paths:

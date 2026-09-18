@@ -188,6 +188,10 @@ you keep the sending, spending and deleting.**
 | Screen → LLM | `screen.describe` `screen.read_text` | **DANGER** |
 | Speech | `speech.record` `speech.transcribe` | **DANGER** |
 | Files (example) | `files.list` `files.read` `notes.save` `files.trash` | READ / WRITE / DANGER |
+| Mail | `mail.list` `mail.read` | READ |
+| Mail | `mail.draft` `mail.archive` | WRITE |
+| Mail | `mail.send` | **DANGER** |
+| Browser | `browser.task` | **DANGER** |
 | **Self-extension** | `skill.acquire` `skill.list` `skill.inspect` `skill.test` | WRITE / READ |
 | **Self-extension** | `skill.install` | **DANGER** |
 
@@ -309,8 +313,15 @@ restore), `organize.*` (dry-run plan, then approved apply), `git.*`, `code.*`
 `config/policy.yaml`), `sys.*`. Done — see
 [features/README.md](features/README.md) for the prefix table.
 
-**Still open in Track B**: `web.search` (needs a provider key), `browser.*`
-(browser-use), `mail.*` (needs Gmail OAuth).
+**Mail** works over IMAP/SMTP with a Gmail app password -- no OAuth flow, no
+Cloud project, standard library only. `mail.send` is DANGER and stays there.
+
+**Browser** works via browser-use driving real Chrome over CDP (no Playwright,
+and it sidesteps Wayland's input restrictions). One caveat worth knowing
+before you demo it: browser-use sends a large system prompt plus the page's
+element tree every step, and Groq's free tier allows 8,000 tokens per minute,
+so a single step can eat the whole minute. It works, slowly and with retries.
+See the TOKEN BUDGET note in `features/browser.py`.
 
 Not built, on purpose: semantic memory, sandboxing, LangGraph orchestration,
 desktop GUI automation. See the deliberate-omissions section of

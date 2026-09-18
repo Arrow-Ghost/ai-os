@@ -282,10 +282,20 @@ def _load_keys(config) -> list[str]:
 
 
 def _is_rate_limit(exc: Exception) -> bool:
+    """True only for limits another key would actually clear.
+
+    413 "Request too large" is deliberately NOT included. It means this single
+    request exceeds the per-minute token allowance, which is a property of the
+    request, not the key -- rotating would burn every key on the same payload.
+    Only 429 (too many requests) and quota exhaustion are worth a fresh key.
+    """
     status = getattr(exc, "status_code", None)
-    if status in (429, 413):
-        return True
     text = str(exc).lower()
+
+    if "too large" in text or "reduce your message size" in text:
+        return False
+    if status == 429:
+        return True
     return "rate limit" in text or "429" in text or "quota" in text
 
 

@@ -37,5 +37,5 @@ Claimed name prefixes — add yours here so two people don't pick the same one:
 | `web.fetch` | B | | done |
 | `web.search` | B | | done — Google CSE (needs `GOOGLE_CSE_ID`) or DuckDuckGo |
 | `skill.*` | core | — | done — self-extension, do not edit casually |
-| `browser.*` | B | | TODO — browser-use |
-| `mail.*` | B | | TODO — needs Gmail OAuth |
+| `browser.*` | B | | done — browser-use + Chrome/CDP |
+| `mail.*` | B | | done — IMAP/SMTP, app password |

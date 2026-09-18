@@ -79,6 +79,10 @@ DEFAULT_POLICY: dict[str, Any] = {
             r"sk-[A-Za-z0-9_\-]{16,}",
             r"gsk_[A-Za-z0-9_\-]{16,}",
             r"AKIA[0-9A-Z]{16}",
+            # Gmail app password: 16 lowercase letters, usually shown in 4
+            # groups. Anchored on a nearby keyword so ordinary prose of four
+            # short words is not mangled.
+            r"(?i)\b(?:app[ -]?password|gmail|smtp|imap)\b[^\n]{0,30}?\b[a-z]{4} ?[a-z]{4} ?[a-z]{4} ?[a-z]{4}\b",
             r"ghp_[A-Za-z0-9]{36}",
             r"-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----",
             r"(?i)\b(api[_-]?key|secret|password|passwd|token)\b\s*[:=]\s*\S+",
