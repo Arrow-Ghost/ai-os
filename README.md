@@ -30,13 +30,31 @@ brain on, and `PyYAML` to edit `config/policy.yaml`.
 ### Turning the brain on
 
 ```bash
-cp .env.example .env         # add your GROQ_API_KEY
+cp .env.example .env         # add GROQ_API_KEY, or GROQ_API_KEYS for several
 # then in config/policy.yaml:  brain.provider: groq
-python -m servant run "list the python files in servant/ and save a summary note"
+python -m servant run "read servant/registry.py and save a summary note"
 ```
 
-Until you do that, `brain.provider: offline` is the default and needs no API
-key — so your team can build and test features on day one without one.
+Set `GROQ_API_KEYS` to a comma-separated list and the brain rotates to the
+next key on a rate limit — Groq's free tier is low enough to run out
+mid-demo.
+
+`brain.provider: offline` needs no API key at all, so your team can build and
+test features without one.
+
+### Models
+
+Verified live on Groq (their model list changes — re-check before a demo):
+
+| Role | Model |
+|---|---|
+| routing, short steps | `openai/gpt-oss-20b` |
+| planning | `openai/gpt-oss-120b` |
+| vision (`screen.*`) | `qwen/qwen3.8-27b` |
+| speech (`speech.*`) | `whisper-large-v3-turbo` |
+
+`groq/compound*` (the models with built-in web search) return **413** on this
+account's tier, so `web.search` needs a separate provider key.
 
 ---
 
@@ -50,6 +68,8 @@ key — so your team can build and test features on day one without one.
 | `python -m servant stop` / `go` | engage / release the kill switch |
 | `python -m servant audit -n 20` | tail the audit log |
 | `python -m servant audit --verify` | check the log's hash chain |
+| `python -m servant watch` | run registered monitors in the background |
+| `python -m servant watch --once` | one pass over every monitor (for cron) |
 | `python -m servant memory` | what the agent remembers |
 | `python -m servant doctor` | environment check |
 
@@ -93,6 +113,44 @@ you keep the sending, spending and deleting.**
 
 ---
 
+## What it can do today
+
+| Area | Tools | Tier |
+|---|---|---|
+| Notifications | `notify.send` | WRITE |
+| Clipboard | `clipboard.read` `clipboard.write` | READ / WRITE |
+| Web | `web.fetch` | READ |
+| Monitors | `watch.check_file` `watch.check_log` `watch.check_endpoint` `watch.add` `watch.list` `watch.remove` | READ / WRITE |
+| Screen | `screen.capture` | READ |
+| Screen → LLM | `screen.describe` `screen.read_text` | **DANGER** |
+| Speech | `speech.record` `speech.transcribe` | **DANGER** |
+| Files (example) | `files.list` `files.read` `notes.save` `files.trash` | READ / WRITE / DANGER |
+
+Anything that opens a sensor, or sends something off the machine that
+**cannot be redacted** (an image, an audio file), is tiered DANGER and asks
+every time. Lower them deliberately in `config/policy.yaml` if a prompt is in
+the way of your demo.
+
+### Monitoring, cheaply
+
+```bash
+python -m servant call watch.add kind=log target=/var/log/build.log interval=30 pattern=ERROR
+python -m servant watch
+```
+
+Polling is pure Python — `stat`, a file read, an HTTP GET — so a watcher left
+running costs nothing. The brain is only involved when a monitor fires *and*
+that monitor was given a `goal`. Every poll still goes through the executor,
+so background work is gated and audited exactly like interactive work.
+
+### Wayland
+
+This is built for a Wayland session (KDE). Wayland deliberately stops a client
+reading another window's pixels or injecting input, so `mss`, `pyautogui` and
+`xdotool` do not work — `screen.*` shells out to `spectacle`/`grim` instead.
+Desktop GUI automation is out of scope by design; drive the browser and the
+system through code instead.
+
 ## Adding a feature
 
 ```python
@@ -133,11 +191,22 @@ tests/              run with: python -m pytest tests -q
 
 ## Status
 
-Working: registry, feature autoloading, permission tiers, human approval,
-redaction, hash-chained audit log, kill switch, budgets, SQLite memory, the
-agent loop, Groq and offline brains, CLI, 34 tests.
+**Framework**: registry, feature autoloading, permission tiers, human
+approval, redaction, hash-chained audit log, kill switch, budgets, SQLite
+memory, the agent loop, Groq (vision + speech + key rotation) and offline
+brains, CLI, background watcher. 77 tests.
 
-Not built yet, on purpose: perception, scheduling, browser control, semantic
-memory, sandboxing. See the deliberate-omissions section of
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — each one is an addition to a
-single layer, not a rewrite.
+**Track B features** (perception and the outside world): notifications,
+clipboard, web fetch, monitors, screen capture + vision, speech. Done.
+
+**Track A features** (local hands): `files.*` beyond the example, `git.*`,
+`organize.*`, `shell.*`, `code.*`, `sys.*`. Not started — see
+[features/README.md](features/README.md) for the prefix table.
+
+**Still open in Track B**: `web.search` (needs a provider key), `browser.*`
+(browser-use), `mail.*` (needs Gmail OAuth).
+
+Not built, on purpose: semantic memory, sandboxing, LangGraph orchestration,
+desktop GUI automation. See the deliberate-omissions section of
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — each is an addition to a single
+layer, not a rewrite.

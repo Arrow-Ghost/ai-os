@@ -27,8 +27,11 @@ DEFAULT_POLICY: dict[str, Any] = {
         "base_url": "https://api.groq.com/openai/v1",
         "model_fast": "openai/gpt-oss-20b",
         "model_smart": "openai/gpt-oss-120b",
+        "model_vision": "qwen/qwen3.8-27b",
+        "model_transcribe": "whisper-large-v3-turbo",
         "temperature": 0.2,
         "max_retries": 3,
+        "max_image_bytes": 4000000,
     },
 
     # --- governance --------------------------------------------------------

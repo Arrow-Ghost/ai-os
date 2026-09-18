@@ -61,6 +61,11 @@ def main(argv: list[str] | None = None) -> int:
     p_audit.add_argument("--verify", action="store_true")
     p_audit.add_argument("--json", action="store_true")
 
+    p_watch = sub.add_parser("watch", help="run registered monitors in the background")
+    p_watch.add_argument("--once", action="store_true", help="single pass, then exit (for cron)")
+    p_watch.add_argument("--yes", action="store_true", help="auto-approve (scratch data only)")
+    p_watch.add_argument("--quiet", action="store_true", help="only print when something fires")
+
     sub.add_parser("doctor", help="check the environment")
     sub.add_parser("memory", help="show what the agent remembers")
 
@@ -104,6 +109,8 @@ def _dispatch(args) -> int:
         return _cmd_run(agent, args)
     if args.command == "memory":
         return _cmd_memory(agent)
+    if args.command == "watch":
+        return _cmd_watch(agent, args)
     return 1
 
 
@@ -167,6 +174,20 @@ def _cmd_run(agent, args) -> int:
     result = agent.run(goal)
     print(f"{DIM}run {result.run_id} · {result.steps} action(s) · audit: {agent.audit.path}{RESET}")
     return 1 if result.stopped else 0
+
+
+def _cmd_watch(agent, args) -> int:
+    from .watcher import run_forever, run_once
+
+    if args.once:
+        stats = run_once(agent, quiet=args.quiet)
+        print(
+            f"{stats.checks} check(s), {stats.fires} fire(s), "
+            f"{stats.escalations} escalation(s), {stats.errors} error(s)"
+        )
+        return 0
+    run_forever(agent, quiet=args.quiet)
+    return 0
 
 
 def _cmd_memory(agent) -> int:

@@ -63,6 +63,22 @@ class Context:
             raise RuntimeError("no brain attached to this context (offline run?)")
         return self._brain.complete(prompt, smart=smart)
 
+    def see(self, image_path: "str | Path", prompt: str) -> str:
+        """Ask the vision model what is in an image.
+
+        NOTE: the image itself cannot be redacted. Whatever is on screen goes
+        to Groq as-is. Say so in the docstring of any tool that calls this.
+        """
+        if self._brain is None:
+            raise RuntimeError("no brain attached to this context (offline run?)")
+        return self._brain.see(image_path, prompt)
+
+    def transcribe(self, audio_path: "str | Path") -> str:
+        """Speech to text, via Groq-hosted Whisper. Audio is uploaded as-is."""
+        if self._brain is None:
+            raise RuntimeError("no brain attached to this context (offline run?)")
+        return self._brain.transcribe(audio_path)
+
     # -- calling other tools ----------------------------------------------
     def call(self, tool_name: str, **args: Any) -> ActionResult:
         """Call another registered tool. Still goes through governance.

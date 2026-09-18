@@ -41,3 +41,25 @@ def agent(config):
 @pytest.fixture
 def yes_agent(config):
     return Agent(config, approver=AutoApprover(announce=False), brain=OfflineBrain(), quiet=True)
+
+
+@pytest.fixture
+def feature():
+    """Load a module from features/ against the freshly-cleared registry.
+
+    The autouse clean_registry fixture empties REGISTRY between tests, but
+    Python caches imported modules, so a plain import would not re-run the
+    @tool decorators. Reloading does.
+    """
+    import importlib
+    import sys
+
+    def _load(module_name: str):
+        dotted = f"features.{module_name}"
+        # Import registers once. If it is already cached from an earlier test,
+        # reload instead -- doing both would register every tool twice.
+        if dotted in sys.modules:
+            return importlib.reload(sys.modules[dotted])
+        return importlib.import_module(dotted)
+
+    return _load

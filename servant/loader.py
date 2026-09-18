@@ -40,6 +40,12 @@ class LoadReport:
         return " | ".join(parts)
 
 
+def _package_matches(package, features_dir: Path) -> bool:
+    """Is this imported package actually the directory we were asked to load?"""
+    paths = [Path(p).resolve() for p in getattr(package, "__path__", [])]
+    return features_dir.resolve() in paths
+
+
 def load_features(features_dir: Path, *, verbose: bool = False) -> LoadReport:
     report = LoadReport(tools_before=len(REGISTRY))
     features_dir = Path(features_dir)
@@ -56,6 +62,14 @@ def load_features(features_dir: Path, *, verbose: bool = False) -> LoadReport:
     package_name = features_dir.name
     try:
         package = importlib.import_module(package_name)
+        # paths.features_dir is configurable, so a module of this name may
+        # already be cached from a DIFFERENT directory. Trust the path we were
+        # given, not the cache.
+        if not _package_matches(package, features_dir):
+            for cached in [m for m in sys.modules if m == package_name or m.startswith(f"{package_name}.")]:
+                del sys.modules[cached]
+            importlib.invalidate_caches()
+            package = importlib.import_module(package_name)
     except Exception as exc:  # noqa: BLE001
         report.failed[package_name] = f"{type(exc).__name__}: {exc}"
         report.tools_after = len(REGISTRY)

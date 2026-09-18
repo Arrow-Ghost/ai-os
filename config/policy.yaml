@@ -10,12 +10,15 @@
 brain:
   # "offline" needs no API key and returns scripted answers -- use it while
   # building features. Switch to "groq" when you want real reasoning.
-  provider: offline
+  provider: groq
   base_url: https://api.groq.com/openai/v1
   model_fast: openai/gpt-oss-20b      # routing, classification, short steps
   model_smart: openai/gpt-oss-120b    # planning and anything that needs care
+  model_vision: qwen/qwen3.8-27b      # screen.describe -- verified live on Groq
+  model_transcribe: whisper-large-v3-turbo   # speech.transcribe, hosted
   temperature: 0.2
   max_retries: 3                      # Groq rate-limits hard; we back off
+  max_image_bytes: 4000000            # refuse bigger screenshots; downscale first
 
 governance:
   # What happens for each tier. auto | approve | block

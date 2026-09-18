@@ -14,6 +14,20 @@ don't edit it. Delete it once you have real features.
 
 Claimed name prefixes — add yours here so two people don't pick the same one:
 
-| Prefix | Owner | Status |
-|---|---|---|
-| `files.*`, `notes.*` | reference example | delete when replaced |
+| Prefix | Track | Owner | Status |
+|---|---|---|---|
+| `files.*`, `notes.*` | reference | — | example, delete when replaced |
+| `notify.*` | B | | done |
+| `clipboard.*` | B | | done |
+| `screen.*` | B | | done |
+| `speech.*` | B | | done |
+| `watch.*` | B | | done |
+| `web.fetch` | B | | done |
+| `web.search` | B | | TODO — needs a search provider key |
+| `browser.*` | B | | TODO — browser-use |
+| `mail.*` | B | | TODO — needs Gmail OAuth |
+| `git.*` | A | | TODO |
+| `organize.*` | A | | TODO |
+| `shell.*` | A | | TODO |
+| `code.*` | A | | TODO |
+| `sys.*` | A | | TODO |

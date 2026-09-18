@@ -57,7 +57,7 @@ def test_loop_halts_on_killswitch(agent):
 
 
 def test_loader_reports_a_broken_feature_without_dying(tmp_path):
-    features = tmp_path / "features"
+    features = tmp_path / "features"  # same name as the real one, on purpose
     features.mkdir()
     (features / "__init__.py").write_text("")
     (features / "good.py").write_text(
@@ -73,3 +73,6 @@ def test_loader_reports_a_broken_feature_without_dying(tmp_path):
     assert "features.good" in report.loaded
     assert any("broken" in name for name in report.failed)
     assert report.tools_added == 1
+    assert "features.example_files" not in report.loaded, (
+        "a cached package of the same name must not shadow the requested directory"
+    )
