@@ -43,6 +43,58 @@ Set `GROQ_API_KEYS` to a comma-separated list and the brain rotates to the
 next key on a rate limit — Groq's free tier is low enough to run out
 mid-demo.
 
+### Three brains, with automatic fallback
+
+`brain.provider: auto` (the default) picks the best available in order:
+**Gemini → Groq → local (Ollama) → offline.** Whichever cloud provider is
+picked, it is automatically wrapped so that if it fails mid-run, the agent
+falls back to a local model rather than dying -- built after a real Gemini
+outage hit mid-development and killed a run that a perfectly good local
+model could have finished. The fallback is never silent: it prints and logs
+which brain actually answered.
+
+```bash
+GEMINI_API_KEY=...      # aistudio.google.com/apikey -- own rate-limit pool
+GROQ_API_KEYS=...       # console.groq.com/keys -- comma-separated, shares one pool
+# local needs nothing -- it uses whatever is already running in Ollama
+```
+
+### An honest report on the local fallback
+
+This matters enough to state plainly rather than just claim "it works."
+
+**Hardware**: RTX 3050 laptop GPU, 4GB VRAM. A 7B model at Q4 needs ~5.4GB,
+so it does not fully fit -- Ollama splits it 41%/59% GPU/CPU, which is why a
+7B model is slow here. Only ~3B models fit entirely in VRAM.
+
+**What I tested, live, end to end** (not just isolated API calls):
+
+| Model | Fits VRAM | Result on the real 63-tool agent loop |
+|---|---|---|
+| `qwen2.5-coder:7b` | no (CPU-split) | picked the right tool, but emitted it as raw JSON text instead of a real tool call -- the coder-tuned variant does not reliably use Ollama's structured tool-calling |
+| `qwen2.5:3b` | yes, 100% GPU, fast (0.13-0.25s warm) | correct tool-call **format**, but poor **reasoning** across 63 tools: reached for `shell.run` instead of the obvious `files.list`, looped on the same failing call, then drifted into calling `sys.battery()` seven times for no reason |
+| `qwen2.5:7b-instruct` | no (CPU-split) | picked the right tool in an isolated test, but was unreliable in the full loop -- and the model schemas alone run ~6,600 tokens against Ollama's default 4,096-token context, which silently truncates the request into an empty response unless `num_ctx` is raised (now done automatically, see `LocalBrain._extra_chat_kwargs`) |
+
+**Groq, for comparison, on the identical task**: picked `files.list` correctly
+on the first try, no looping, no wrong tool. Cloud models reason reliably
+across a large tool set; the local models here, on this GPU, do not -- not a
+close call.
+
+**Conclusion, stated plainly**: the local fallback is real, tested
+infrastructure -- key handling, the context-window fix, loop detection, the
+fallback wrapper -- and it is better than a dead run when every cloud
+provider is genuinely down (which happened: Gemini hit a live 503 outage,
+Groq hit its shared rate limit from testing, mid-build). It is not a
+reliable substitute for a cloud model against this project's full tool
+surface on 4GB of VRAM. If your laptop has more VRAM, a bigger model that
+fully fits it (8B+ at Q4, or a quantized 14B) is very likely to reason much
+better -- change `brain.local_model` and `brain.local_num_ctx` accordingly.
+
+**A structural fix that helps every brain, not just local**: a loop-detection
+guard now stops the run after 3 identical repeated tool calls (with a
+warning injected after the 2nd), rather than silently burning the whole turn
+budget the way the small local model did in testing.
+
 ### Models
 
 Verified live on Groq (their model list changes — re-check before a demo):

@@ -275,8 +275,15 @@ def _cmd_doctor(args) -> int:
     print(f"  policy source   {config.source}")
     provider = str(config.get("brain.provider"))
     if provider == "auto":
-        provider = f"auto -> {'groq' if config.secret('GROQ_API_KEY') else 'offline (no key)'}"
+        from .brain import _load_keys as _brain_keys
+        if _brain_keys(config, "GEMINI_API_KEYS", "GEMINI_API_KEY"):
+            provider = "auto -> gemini"
+        elif _brain_keys(config):
+            provider = "auto -> groq"
+        else:
+            provider = "auto -> offline (no key)"
     print(f"  brain provider  {provider}")
+    print(f"  GEMINI_API_KEY  {'set' if config.secret('GEMINI_API_KEY') else 'NOT set'}")
     print(f"  GROQ_API_KEY    {'set' if config.secret('GROQ_API_KEY') else 'NOT set'}")
     print(f"  state dir       {config.path('state_dir')}")
 

@@ -33,6 +33,12 @@ DEFAULT_POLICY: dict[str, Any] = {
         "temperature": 0.2,
         "max_retries": 3,
         "max_image_bytes": 4000000,
+        # Local fallback (Ollama). "auto" wires it in only when Ollama is
+        # actually reachable at startup, so a machine without it installed
+        # behaves exactly as before.
+        "local_fallback": "auto",
+        "local_base_url": "http://localhost:11434/v1",
+        "local_model": "qwen2.5:7b-instruct",
     },
 
     # --- governance --------------------------------------------------------

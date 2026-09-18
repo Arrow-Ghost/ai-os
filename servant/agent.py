@@ -128,6 +128,14 @@ class Agent:
         history: list[dict] = []
         schemas = self.registry.openai_schemas()
         max_llm_calls = int(self.config.get("budgets.max_llm_calls", 20))
+        # Loop detection: a weak model can get stuck repeating the exact same
+        # call (seen live with a small local model calling shell.which('ls')
+        # over and over). Two repeats gets a pointed warning fed back; a third
+        # identical repeat after that warning ends the run rather than
+        # silently burning the whole turn budget on a call that already
+        # failed the same way twice.
+        recent_calls: list[tuple[str, str]] = []
+        warned_about_repeat = False
 
         try:
             for turn in range(max_llm_calls):
@@ -149,6 +157,39 @@ class Agent:
                     break
 
                 assert isinstance(decision, ToolCall)
+
+                signature = (decision.tool, json.dumps(decision.args, sort_keys=True, default=str))
+                # How many of the most recent calls, counting back from now,
+                # are this exact same (tool, args)? Making this call would be
+                # repeat_run + 1 in a row.
+                repeat_run = 0
+                for previous in reversed(recent_calls):
+                    if previous != signature:
+                        break
+                    repeat_run += 1
+
+                if repeat_run >= 2:  # this call would be the 3rd identical one
+                    result.answer = (
+                        f"Stopped: called {decision.tool} with identical arguments "
+                        f"{repeat_run + 1} times in a row without making progress."
+                    )
+                    self.audit.write("think", run_id, turn=turn, decision="loop_detected", tool=decision.tool)
+                    self._say(f"\n[loop detected] {result.answer}")
+                    break
+                recent_calls.append(signature)
+
+                if repeat_run == 1 and not warned_about_repeat:  # this call is the 2nd identical one
+                    warned_about_repeat = True
+                    history.append({
+                        "role": "system",
+                        "content": (
+                            f"You have now called {decision.tool} with the same arguments twice in a "
+                            f"row with no new result. Do not call it a third time with these exact "
+                            f"arguments -- either change the arguments meaningfully, try a different "
+                            f"tool, or finish and explain what is blocking you."
+                        ),
+                    })
+
                 self.audit.write(
                     "think", run_id, turn=turn, decision="tool",
                     tool=decision.tool, rationale=decision.rationale,

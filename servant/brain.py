@@ -34,6 +34,11 @@ SYSTEM_PROMPT = """You are a careful assistant operating the user's laptop throu
 Rules you follow without exception:
 - Use a tool, or finish. Never claim you did something you did not do through a tool.
 - Prefer the least powerful tool that accomplishes the step.
+- Prefer a PURPOSE-BUILT tool over a general one. If a dedicated tool exists for the job
+  (files.list, git.status, sys.battery, ...), use it instead of shell.run -- shell.run is
+  for when nothing else covers the case, not a default reach.
+- If a tool call fails or gives an unhelpful result, do not repeat the exact same call. Either
+  change the arguments meaningfully or pick a different approach.
 - If the request is ambiguous, or you are guessing about something irreversible, finish and ask instead of acting.
 - State your confidence honestly. Low confidence is useful information, not a failure.
 - You cannot spend money, install software, or modify your own code. Do not try.
@@ -225,6 +230,17 @@ class GroqBrain:
         raise BrainUnavailable(f"transcription failed: {_describe(last)}")
 
     # -- internals ---------------------------------------------------------
+    def _extra_chat_kwargs(self) -> dict:
+        """Hook for a subclass to add provider-specific request options.
+
+        LocalBrain uses it to request a context window big enough for this
+        project's tool schemas (measured at ~6,600 tokens for 63 tools --
+        Ollama's default of 4,096 truncates that and the model answers with
+        nothing, which looks exactly like a bad model when it is actually a
+        starved context window).
+        """
+        return {}
+
     def _make_client(self):
         client = self._OpenAI(api_key=self._keys[self._key_index], base_url=self._base_url)
         # The SDK retries on its own by default; ours (with key rotation) would stack on top.
@@ -254,6 +270,7 @@ class GroqBrain:
             "model": model or (self.model_smart if smart else self.model_fast),
             "messages": self._scrub(messages),
             "temperature": self.temperature,
+            **self._extra_chat_kwargs(),
         }
         if tools:
             kwargs["tools"] = tools
@@ -275,12 +292,12 @@ class GroqBrain:
         raise BrainUnavailable(f"Groq call failed ({len(self._keys)} key(s)): {_describe(last)}")
 
 
-def _load_keys(config) -> list[str]:
-    """GROQ_API_KEYS (comma separated) wins; GROQ_API_KEY is the single-key form."""
-    many = config.secret("GROQ_API_KEYS") or ""
+def _load_keys(config, many_var: str = "GROQ_API_KEYS", one_var: str = "GROQ_API_KEY") -> list[str]:
+    """<PREFIX>_API_KEYS (comma separated) wins; <PREFIX>_API_KEY is the single-key form."""
+    many = config.secret(many_var) or ""
     keys = [k.strip() for k in many.split(",") if k.strip()]
     if not keys:
-        one = config.secret("GROQ_API_KEY")
+        one = config.secret(one_var)
         keys = [one.strip()] if one else []
     seen, unique = set(), []
     for key in keys:
@@ -369,13 +386,433 @@ def _parse_confidence(text: str) -> float:
     return max(0.0, min(1.0, float(match.group(1))))
 
 
+
+
+# --------------------------------------------------------------------------
+# Gemini
+# --------------------------------------------------------------------------
+
+class GeminiBrain:
+    """Google Gemini via google-genai. A second brain with its OWN rate-limit
+    pool, separate from whatever Groq provider is configured -- useful
+    specifically because Groq's free tier shares one 8,000 TPM ceiling across
+    every key on the account (see docs/ARCHITECTURE.md). Whether several
+    Gemini keys share a project-level quota is NOT verified here; rotation is
+    built the same way regardless, since it costs nothing if they do share
+    one and helps for real if they do not.
+
+    `client` is for tests: pass a fake and no key or network is needed.
+    """
+
+    def __init__(self, config, redactor, client=None):
+        self._keys = _load_keys(config, "GEMINI_API_KEYS", "GEMINI_API_KEY")
+        if not self._keys and client is None:
+            raise RuntimeError(
+                "No Gemini key found. Set GEMINI_API_KEY (or GEMINI_API_KEYS for "
+                "several) in .env, or set brain.provider: offline."
+            )
+        try:
+            from google import genai as _genai
+            from google.genai import types as _types
+        except ImportError as exc:  # pragma: no cover
+            raise RuntimeError("pip install google-genai -- required for the gemini provider") from exc
+
+        self._genai, self._types = _genai, _types
+        self._redactor = redactor
+        self._key_index = 0
+        # A test double, if given, stays in place for the whole brain's life:
+        # _make_client() must never silently replace it with a real network
+        # client when rotation fires, or an injected fake only ever covers
+        # the first call.
+        self._injected_client = client
+        self._client = client if client is not None else self._make_client()
+
+        # "-latest" aliases, not a pinned version: a pinned "gemini-2.5-pro"
+        # went 404 mid-build ("no longer available to new users"), which is
+        # exactly the failure these aliases exist to avoid. gemini-pro-latest
+        # returned 429 RESOURCE_EXHAUSTED immediately on this account's free
+        # tier, so "smart" defaults to flash too rather than a model this key
+        # cannot actually call -- override in policy.yaml if your tier has pro.
+        self.model_fast = config.get("brain.gemini_model_fast", "gemini-flash-latest")
+        self.model_smart = config.get("brain.gemini_model_smart", "gemini-flash-latest")
+        self.model_vision = config.get("brain.gemini_model_vision", "gemini-flash-latest")
+        self.temperature = float(config.get("brain.temperature", 0.2))
+        self.max_retries = int(config.get("brain.max_retries", 3))
+        self.max_image_bytes = int(config.get("brain.max_image_bytes", 4_000_000))
+        self.calls = 0
+        self.rotations = 0
+
+    # -- public --------------------------------------------------------
+    def decide(self, goal: str, history: list[dict], tools: list[dict]) -> Decision:
+        to_wire, from_wire = (_name_maps(tools) if tools else ({}, {}))
+        gemini_tools = self._to_gemini_tools(tools, to_wire) if tools else None
+
+        contents = self._to_gemini_contents(goal, history, to_wire)
+        response = self._generate(contents, tools=gemini_tools, smart=True)
+
+        call = self._first_function_call(response)
+        if call is not None:
+            real_name = from_wire.get(call.name, call.name)
+            return ToolCall(
+                tool=real_name,
+                args=dict(call.args or {}),
+                rationale=(response.text or "").strip()[:400],
+                confidence=_parse_confidence(response.text or ""),
+            )
+        return Finish((response.text or "").strip() or "(no answer)")
+
+    def complete(self, prompt: str, *, smart: bool = False) -> str:
+        response = self._generate([{"role": "user", "parts": [{"text": prompt}]}], smart=smart)
+        return (response.text or "").strip()
+
+    def see(self, image_path: str | Path, prompt: str) -> str:
+        path = Path(image_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"no such image: {path}")
+        raw = path.read_bytes()
+        if len(raw) > self.max_image_bytes:
+            raise ValueError(
+                f"{path.name} is {len(raw) / 1e6:.1f}MB, over the "
+                f"{self.max_image_bytes / 1e6:.1f}MB limit. Downscale it first."
+            )
+        mime = mimetypes.guess_type(path.name)[0] or "image/png"
+        contents = [{"role": "user", "parts": [
+            {"text": self._scrub(prompt)},
+            {"inline_data": {"mime_type": mime, "data": raw}},
+        ]}]
+        response = self._generate(contents, model_override=self.model_vision)
+        return (response.text or "").strip()
+
+    def transcribe(self, audio_path: str | Path) -> str:
+        """Speech to text. Gemini takes audio inline -- no separate upload step."""
+        path = Path(audio_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"no such audio file: {path}")
+        mime = mimetypes.guess_type(path.name)[0] or "audio/wav"
+        contents = [{"role": "user", "parts": [
+            {"text": "Transcribe this audio exactly. Output only the transcript, nothing else."},
+            {"inline_data": {"mime_type": mime, "data": path.read_bytes()}},
+        ]}]
+        response = self._generate(contents, model_override=self.model_fast)
+        return (response.text or "").strip()
+
+    @property
+    def raw_client(self):
+        """Gemini has no equivalent hosted prompt-guard classifier; the input
+        guard's Groq call is skipped when this is the active brain."""
+        return None
+
+    # -- internals -------------------------------------------------------
+    def _make_client(self):
+        if self._injected_client is not None:
+            return self._injected_client
+
+        # google-genai warns "both GOOGLE_API_KEY and GEMINI_API_KEY are set"
+        # even though api_key= below always wins (verified: an explicit key
+        # overrides a deliberately-broken GOOGLE_API_KEY in the environment).
+        # GOOGLE_API_KEY is real and still used by web.search's google
+        # backend, so it cannot simply be removed from .env -- hide it from
+        # this one call instead, which is cosmetic, not a correctness fix.
+        import os
+
+        previous = os.environ.pop("GOOGLE_API_KEY", None)
+        try:
+            return self._genai.Client(api_key=self._keys[self._key_index])
+        finally:
+            if previous is not None:
+                os.environ["GOOGLE_API_KEY"] = previous
+
+    def _rotate_key(self, exc: Exception) -> bool:
+        if len(self._keys) < 2 or not _is_gemini_rate_limit(exc):
+            return False
+        self._key_index = (self._key_index + 1) % len(self._keys)
+        self._client = self._make_client()
+        self.rotations += 1
+        return True
+
+    def _scrub(self, value):
+        return self._redactor.scrub(value) if self._redactor else value
+
+    def _to_gemini_tools(self, tools: list[dict], to_wire: dict):
+        declarations = []
+        for entry in tools:
+            fn = entry["function"]
+            declarations.append(self._types.FunctionDeclaration(
+                name=to_wire.get(fn["name"], fn["name"]),
+                description=fn.get("description", ""),
+                parameters_json_schema=fn.get("parameters", {"type": "object", "properties": {}}),
+            ))
+        return [self._types.Tool(function_declarations=declarations)]
+
+    def _to_gemini_contents(self, goal: str, history: list[dict], to_wire: dict) -> list[dict]:
+        """Reuses the same OpenAI-shaped history the Groq brain builds, so the
+        agent loop needs no Gemini-specific branch."""
+        contents = [{"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nGoal: {goal}"}]}]
+        for msg in history:
+            role = "model" if msg.get("role") == "assistant" else "user"
+            if msg.get("tool_calls"):
+                parts = []
+                for call in msg["tool_calls"]:
+                    name = to_wire.get(call["function"]["name"], call["function"]["name"])
+                    args = json.loads(call["function"]["arguments"] or "{}")
+                    parts.append({"function_call": {"name": name, "args": args}})
+                contents.append({"role": "model", "parts": parts})
+            elif msg.get("role") == "tool":
+                contents.append({"role": "user", "parts": [{"text": f"tool result: {msg['content']}"}]})
+            else:
+                text = msg.get("content") or ""
+                if text:
+                    contents.append({"role": role, "parts": [{"text": text}]})
+        return contents
+
+    def _first_function_call(self, response):
+        try:
+            for part in response.candidates[0].content.parts:
+                if getattr(part, "function_call", None) is not None:
+                    return part.function_call
+        except (IndexError, AttributeError):
+            pass
+        return None
+
+    def _generate(self, contents, *, tools=None, smart: bool = False, model_override: str | None = None):
+        model = model_override or (self.model_smart if smart else self.model_fast)
+        config_kwargs = {"temperature": self.temperature}
+        if tools:
+            config_kwargs["tools"] = tools
+
+        safe_contents = self._scrub(contents) if isinstance(contents, str) else contents
+
+        last: Exception | None = None
+        attempts = self.max_retries + len(self._keys)
+        for attempt in range(max(1, attempts)):
+            try:
+                self.calls += 1
+                return self._client.models.generate_content(
+                    model=model, contents=safe_contents,
+                    config=self._types.GenerateContentConfig(**config_kwargs),
+                )
+            except Exception as exc:  # noqa: BLE001
+                last = exc
+                if self._rotate_key(exc):
+                    continue
+                if attempt == attempts - 1:
+                    break
+                time.sleep(min(2 ** attempt, 8))
+        raise RuntimeError(f"Gemini call failed ({attempts} attempt(s), {len(self._keys)} key(s)): {last}")
+
+
+def _is_gemini_rate_limit(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "429" in text or "resource_exhausted" in text or "quota" in text or "rate limit" in text
+
+
+
+
+# --------------------------------------------------------------------------
+# Local (Ollama)
+# --------------------------------------------------------------------------
+
+class LocalBrain(GroqBrain):
+    """A model running on THIS machine, via Ollama's OpenAI-compatible endpoint.
+
+    Reuses GroqBrain wholesale -- retries, tool-schema translation, wire-name
+    mapping -- because Ollama's /v1 endpoint speaks the same protocol. The
+    only real differences are: no API key (Ollama does not check the one it
+    is given), one "key" so rotation naturally no-ops, and no vision/audio
+    model configured, because the model actually installed on this laptop
+    (qwen2.5:3b, chosen after testing -- see docs/ARCHITECTURE.md) is
+    text-only. see()/transcribe() fail with a clear reason rather than a
+    confusing one from a model that was never asked to do that job.
+
+    This exists as a fallback, not a first choice: it runs entirely offline,
+    with no per-minute token ceiling and no dependency on Groq or Gemini being
+    up, at a real cost in quality and speed versus either cloud model on this
+    GPU (4GB VRAM). Use it when both cloud providers are down or you are
+    offline, not as the default.
+    """
+
+    def __init__(self, config, redactor, *, client=None):
+        self._keys = ["ollama"]  # Ollama does not check this; a real key is not needed
+        self._base_url = config.get("brain.local_base_url", "http://localhost:11434/v1")
+        self._key_index = 0
+
+        if client is not None:
+            self._OpenAI = None
+            self._client = client
+        else:
+            try:
+                from openai import OpenAI  # type: ignore
+            except ImportError as exc:  # pragma: no cover
+                raise BrainUnavailable("pip install openai -- required for the local provider") from exc
+            self._OpenAI = OpenAI
+            self._client = self._make_client()
+
+        self._redactor = redactor
+        self.model_fast = config.get("brain.local_model", "qwen2.5:3b")
+        self.model_smart = config.get("brain.local_model", "qwen2.5:3b")
+        self.model_vision = None
+        self.model_transcribe = None
+        self.temperature = float(config.get("brain.temperature", 0.2))
+        self.max_retries = max(1, int(config.get("brain.max_retries", 2)))
+        self.max_image_bytes = int(config.get("brain.max_image_bytes", 4_000_000))
+        self._num_ctx = int(config.get("brain.local_num_ctx", 16384))
+        self.calls = 0
+        self.rotations = 0  # always 0 -- one key, nothing to rotate to
+
+    def see(self, image_path, prompt: str) -> str:
+        raise BrainUnavailable(
+            "the local model (qwen2.5:3b) is text-only -- no vision support on this "
+            "laptop's GPU. Use brain.provider: gemini or groq for screen.describe / "
+            "screen.read_text, or switch to a vision-capable local model if you have "
+            "the VRAM for one."
+        )
+
+    def transcribe(self, audio_path) -> str:
+        raise BrainUnavailable(
+            "the local model (qwen2.5:3b) does not take audio input. Use "
+            "brain.provider: groq for speech.transcribe (Whisper is hosted there)."
+        )
+
+    def _extra_chat_kwargs(self) -> dict:
+        # The tool schemas alone run ~6,600 tokens; Ollama's default 4,096
+        # context truncates the request and the model answers with nothing,
+        # which is indistinguishable from a broken model unless you know to
+        # look here. Confirmed live: identical prompt, only this changed, and
+        # (no answer) became a real tool call.
+        return {"extra_body": {"options": {"num_ctx": self._num_ctx}}}
+
+    @property
+    def raw_client(self):
+        """No hosted prompt-guard classifier locally; the input guard degrades
+        to unscored (still wrapped, just not scored) when this is the active brain."""
+        return None
+
+
+
+
+# --------------------------------------------------------------------------
+# Fallback wrapper
+# --------------------------------------------------------------------------
+
+class FallbackBrain:
+    """Tries `primary`; on failure, tries `fallback`. Built after a real Gemini
+    503 outage hit mid-development -- the whole run died even though a
+    perfectly usable local model was sitting right there. Never silent about
+    which brain actually answered: `last_used` and the warning callback both
+    exist so a run using the fallback shows it, in the terminal and the log,
+    rather than quietly degrading.
+    """
+
+    def __init__(self, primary, fallback, *, on_fallback=None):
+        self.primary = primary
+        self.fallback = fallback
+        self.on_fallback = on_fallback
+        self.last_used = "primary"
+
+    def _try(self, method: str, *args, **kwargs):
+        try:
+            result = getattr(self.primary, method)(*args, **kwargs)
+            self.last_used = "primary"
+            return result
+        except Exception as primary_exc:  # noqa: BLE001
+            if self.on_fallback:
+                self.on_fallback(f"{method}: primary brain failed ({primary_exc}); trying local fallback")
+            try:
+                result = getattr(self.fallback, method)(*args, **kwargs)
+                self.last_used = "fallback"
+                return result
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"both brains failed for {method}() -- primary: {primary_exc} | "
+                    f"fallback: {fallback_exc}"
+                ) from fallback_exc
+
+    def decide(self, goal, history, tools):
+        return self._try("decide", goal, history, tools)
+
+    def complete(self, prompt, *, smart=False):
+        return self._try("complete", prompt, smart=smart)
+
+    def see(self, image_path, prompt):
+        return self._try("see", image_path, prompt)
+
+    def transcribe(self, audio_path):
+        return self._try("transcribe", audio_path)
+
+    @property
+    def calls(self):
+        return getattr(self.primary, "calls", 0) + getattr(self.fallback, "calls", 0)
+
+    @property
+    def rotations(self):
+        return getattr(self.primary, "rotations", 0)
+
+    @property
+    def raw_client(self):
+        """Whichever brain answered most recently -- that is the one whose
+        wire format the injection guard's classifier call should match."""
+        active = self.primary if self.last_used == "primary" else self.fallback
+        return getattr(active, "raw_client", None)
+
+
+def _ollama_reachable(base_url: str, timeout: float = 0.5) -> bool:
+    """Cheap, fast check -- never block startup waiting on a laptop daemon
+    that might not be running. Used only to decide whether local fallback is
+    worth wiring in at all."""
+    import urllib.request
+
+    try:
+        urllib.request.urlopen(base_url.replace("/v1", "/api/tags"), timeout=timeout)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def build_brain(config, redactor):
     """Factory driven by config. Unknown providers fail loudly, not silently."""
     provider = (config.get("brain.provider") or "offline").lower()
-    if provider == "auto":  # groq when a key is present, offline otherwise
-        provider = "groq" if _load_keys(config) else "offline"
+    if provider == "auto":
+        # Prefer Gemini when it has a key: it is a SEPARATE rate-limit pool
+        # from Groq, which matters because every Groq key on this account
+        # shares one 8,000 TPM ceiling (see docs/ARCHITECTURE.md). Falls
+        # back to Groq, then offline.
+        if _load_keys(config, "GEMINI_API_KEYS", "GEMINI_API_KEY"):
+            provider = "gemini"
+        elif _load_keys(config):
+            provider = "groq"
+        else:
+            provider = "offline"
+    if provider == "local":
+        return LocalBrain(config, redactor)
     if provider == "offline":
         return OfflineBrain()
-    if provider == "groq":
-        return GroqBrain(config, redactor)
-    raise ValueError(f"unknown brain.provider: {provider!r} (expected 'auto', 'groq' or 'offline')")
+    if provider not in {"groq", "gemini"}:
+        raise ValueError(
+            f"unknown brain.provider: {provider!r} "
+            f"(expected 'auto', 'groq', 'gemini', 'local' or 'offline')"
+        )
+
+    primary = GroqBrain(config, redactor) if provider == "groq" else GeminiBrain(config, redactor)
+
+    # Wrap with a local fallback when: the owner has not disabled it, AND
+    # Ollama is actually reachable right now. "auto" (the default) only wires
+    # this in when it can see Ollama running, so a machine without it
+    # installed behaves exactly as before -- no surprise dependency.
+    fallback_setting = str(config.get("brain.local_fallback", "auto")).lower()
+    base_url = config.get("brain.local_base_url", "http://localhost:11434/v1")
+    want_fallback = (
+        fallback_setting == "true"
+        or (fallback_setting == "auto" and _ollama_reachable(base_url))
+    )
+    if not want_fallback:
+        return primary
+
+    try:
+        local = LocalBrain(config, redactor)
+    except Exception:  # noqa: BLE001 -- fallback wiring must never block startup
+        return primary
+
+    def _warn(message: str) -> None:
+        print(f"  [brain] {message}")
+
+    return FallbackBrain(primary, local, on_fallback=_warn)

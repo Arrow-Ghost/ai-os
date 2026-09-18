@@ -21,6 +21,15 @@ brain:
   max_retries: 3                      # Groq rate-limits hard; we back off
   max_image_bytes: 4000000            # refuse bigger screenshots; downscale first
 
+  # Local fallback via Ollama. "auto" (default) only wires it in if Ollama is
+  # actually reachable at startup -- a laptop without it installed behaves
+  # exactly as before. Set to true/false to force it either way.
+  # Text-only: no vision or audio locally (see LocalBrain in brain.py).
+  local_fallback: auto
+  local_base_url: http://localhost:11434/v1
+  local_model: qwen2.5:7b-instruct             # chosen after live testing -- see
+                                       # docs/ARCHITECTURE.md for why
+
 governance:
   # What happens for each tier. auto | approve | block
   tier_policy:

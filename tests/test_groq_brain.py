@@ -152,7 +152,7 @@ def test_explicit_groq_without_a_key_fails_at_startup(config, monkeypatch):
 
 
 def test_auto_provider_picks_by_key(config, monkeypatch):
-    data = {**config.data, "brain": {**config.data["brain"], "provider": "auto"}}
+    data = {**config.data, "brain": {**config.data["brain"], "provider": "auto", "local_fallback": "false"}}
     cfg = Config(data=data, root=config.root)
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     monkeypatch.delenv("GROQ_API_KEYS", raising=False)

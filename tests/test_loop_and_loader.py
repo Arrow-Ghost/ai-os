@@ -76,3 +76,107 @@ def test_loader_reports_a_broken_feature_without_dying(tmp_path):
     assert "features.example_files" not in report.loaded, (
         "a cached package of the same name must not shadow the requested directory"
     )
+
+
+# -- loop detection ---------------------------------------------------------
+
+def test_identical_repeated_calls_are_stopped(config):
+    """A weak model stuck calling the same tool with the same args must not
+    burn the whole turn budget -- seen live with a small local model looping
+    on shell.which('ls') seven times."""
+    from servant.agent import Agent
+    from servant.governance import AutoApprover
+    from servant.sdk import tool, Tier
+
+    @tool(name="t.stuck", tier=Tier.READ, params={"n": "arg"})
+    def t_stuck(ctx, n: int) -> str:
+        """Always the same result."""
+        return "no progress"
+
+    # Same call, forever, if nothing stops it.
+    brain = OfflineBrain([ToolCall(tool="t.stuck", args={"n": 1})] * 10)
+    agent = Agent(config, approver=AutoApprover(announce=False), brain=brain, quiet=True)
+
+    result = agent.run("do the stuck thing")
+    assert result.steps == 2, "must stop after 2 identical calls, not exhaust the budget"
+    assert "identical arguments" in result.answer
+
+
+def test_different_arguments_do_not_trigger_loop_detection(config):
+    """Calling the same TOOL repeatedly with genuinely different args is fine."""
+    from servant.agent import Agent
+    from servant.governance import AutoApprover
+    from servant.sdk import tool, Tier
+
+    @tool(name="t.counter", tier=Tier.READ, params={"n": "arg"})
+    def t_counter(ctx, n: int) -> str:
+        """Different each time."""
+        return f"got {n}"
+
+    brain = OfflineBrain([
+        ToolCall(tool="t.counter", args={"n": 1}),
+        ToolCall(tool="t.counter", args={"n": 2}),
+        ToolCall(tool="t.counter", args={"n": 3}),
+        Finish("done"),
+    ])
+    agent = Agent(config, approver=AutoApprover(announce=False), brain=brain, quiet=True)
+
+    result = agent.run("count up")
+    assert result.steps == 3
+    assert result.answer == "done"
+
+
+def test_a_single_repeat_does_not_trigger_anything(config):
+    """Two calls in a row is not a loop -- only three identical calls are."""
+    from servant.agent import Agent
+    from servant.governance import AutoApprover
+    from servant.sdk import tool, Tier
+
+    calls = []
+
+    @tool(name="t.retry", tier=Tier.READ)
+    def t_retry(ctx) -> str:
+        """Called twice on purpose, then something else."""
+        calls.append(1)
+        return "ok"
+
+    brain = OfflineBrain([
+        ToolCall(tool="t.retry", args={}),
+        ToolCall(tool="t.retry", args={}),
+        Finish("done after two"),
+    ])
+    agent = Agent(config, approver=AutoApprover(announce=False), brain=brain, quiet=True)
+
+    result = agent.run("try twice")
+    assert len(calls) == 2
+    assert result.answer == "done after two"
+
+
+def test_recovering_after_the_warning_resets_the_streak(config):
+    """If the model heeds the warning and changes course, it must not still
+    be penalised for the earlier repeat."""
+    from servant.agent import Agent
+    from servant.governance import AutoApprover
+    from servant.sdk import tool, Tier
+
+    @tool(name="t.a", tier=Tier.READ)
+    def t_a(ctx) -> str:
+        """A."""
+        return "a"
+
+    @tool(name="t.b", tier=Tier.READ)
+    def t_b(ctx) -> str:
+        """B."""
+        return "b"
+
+    brain = OfflineBrain([
+        ToolCall(tool="t.a", args={}),
+        ToolCall(tool="t.a", args={}),  # 2nd identical -> warning fires
+        ToolCall(tool="t.b", args={}),  # model changes course
+        Finish("recovered"),
+    ])
+    agent = Agent(config, approver=AutoApprover(announce=False), brain=brain, quiet=True)
+
+    result = agent.run("try a then recover")
+    assert result.steps == 3
+    assert result.answer == "recovered"
