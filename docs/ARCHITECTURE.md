@@ -57,10 +57,63 @@ drives, because it runs on a machine you care about.
 | Self-preservation | **Trivially killable.** Three independent stops, checked before every action. No code resists, delays or routes around a halt. | `governance/killswitch.py` |
 | Goal-content integrity | **Trivially correctable.** Goals and limits live in `config/policy.yaml`, which the agent reads and never writes. No mechanism preserves an old goal against your edit. | `config.py` |
 | Resource acquisition | **Bounded.** Step, turn and time budgets per run. `max_spend_usd: 0.0`. No self-replication, no reaching to other machines. | `executor.py::Budget` |
-| Self-modification | **Static core.** Features are added as files by humans; the agent cannot modify the executor, the governance layer or the policy. | by construction |
+| Self-modification | **Static core, extensible edge.** The agent may write NEW TOOLS for itself; it may not touch the executor, the governance layer or the policy. Generated tools are pinned to a tier that always asks. | `validator.py`, `sandbox.py`, `features/skill.py` |
 
 A corrigible agent is not a weaker agent. It is the only kind it is reasonable
 to hand real control of a laptop.
+
+## Self-extension
+
+The agent can write its own tools. That is a real capability and it needs to
+be described precisely, because it sounds like the thing this project exists
+to prevent.
+
+**What it may do:** write a new tool into the feature layer — the same thing a
+junior does, automated.
+
+**What it may not do:** modify the executor, the governance layer, the policy
+file, the audit log, its own source, or `.git`.
+
+The pipeline:
+
+```
+  skill.acquire   research -> draft -> validate -> sandbox -> quarantine
+                  (retries, feeding each failure back to the model)
+        |
+        |   .servant/quarantine is NOT on the feature loader's path.
+        |   Nothing here is callable.
+        v
+  a human reads it   skill.inspect
+        |
+        v
+  skill.install   [DANGER -- asks every time] -> features/
+```
+
+Three properties do the work:
+
+1. **Tier floor.** Generated tools are pinned to `DANGER`, so anything the
+   agent taught itself asks a human before it runs. The validator rejects any
+   generated tool that declares something lower — *tier laundering* is the
+   single most important thing it checks. Lowering a tier is a deliberate
+   edit a person makes in `config/policy.yaml`, by name.
+2. **Quarantine.** Drafts land in `.servant/quarantine`, which the loader does
+   not read. Generated code is inert until a human promotes it.
+3. **Sandbox.** Drafts execute only in a limited subprocess with a stub
+   context — no real memory, no brain, no credentials, CPU/memory/file-size
+   capped.
+
+### What the sandbox is not
+
+It is a separate process with `rlimit`s, not a kernel boundary. It does not
+block network egress and the code runs as your user. It is a guard against a
+*confused* tool, not a malicious one. The real protection is that a human
+reads the diff before `skill.install`, and that generated tools always ask.
+Doing this properly needs namespaces (bwrap, nsjail) or a container — that is
+the production upgrade, and it slots in behind `sandbox.run_tool` without any
+feature changing.
+
+Likewise the validator is an AST check, not a proof. It catches the realistic
+failure — a model writing something reckless — not a determined adversary.
 
 ## Trust boundaries
 

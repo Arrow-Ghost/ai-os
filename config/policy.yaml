@@ -48,6 +48,23 @@ budgets:
   max_seconds: 300
   max_spend_usd: 0.0     # hard zero. The agent never spends money. Ever.
 
+skills:
+  # The agent may write NEW TOOLS for itself. It may not modify its own core,
+  # its governance layer, or this file.
+  enabled: true
+
+  # Generated tools are pinned to this tier, so anything the agent taught
+  # itself asks you before it runs. The validator rejects generated code that
+  # declares a lower tier -- it cannot grant itself permission.
+  #
+  # Once you have read a generated tool and trust it, lower it BY NAME in
+  # governance.tier_overrides above. Do not lower this floor.
+  tier_floor: danger
+
+  max_attempts: 3          # redraft this many times on validation/test failure
+  sandbox_timeout: 20      # seconds before a draft is killed
+  sandbox_memory_mb: 512
+
 redaction:
   enabled: true
   patterns:

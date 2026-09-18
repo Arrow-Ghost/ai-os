@@ -26,12 +26,16 @@ class Context:
         brain=None,
         executor=None,
         redactor=None,
+        registry=None,
         quiet: bool = False,
     ):
         self.run_id = run_id
         self.config = config
         self.memory = memory
         self.root: Path = config.root
+        #: Read-only view of every registered tool. Use it to introspect what
+        #: exists; you still have to go through ctx.call() to run anything.
+        self.registry = registry
         self._audit = audit
         self._approver = approver
         self._brain = brain

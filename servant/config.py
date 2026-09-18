@@ -80,6 +80,18 @@ DEFAULT_POLICY: dict[str, Any] = {
         "forbidden_paths": ["~/.ssh", "~/.aws", "~/.gnupg", ".env"],
     },
 
+    # --- skill acquisition (the agent writing its own tools) ---------------
+    "skills": {
+        "enabled": True,
+        # Generated tools are pinned to this tier. DANGER means anything the
+        # agent taught itself asks a human before it runs. The validator
+        # rejects any generated tool that declares something lower.
+        "tier_floor": "danger",
+        "max_attempts": 3,
+        "sandbox_timeout": 20,
+        "sandbox_memory_mb": 512,
+    },
+
     # --- storage -----------------------------------------------------------
     "paths": {
         "state_dir": ".servant",

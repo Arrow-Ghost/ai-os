@@ -96,6 +96,7 @@ class Agent:
             brain=self.brain,
             executor=self.executor,
             redactor=self.redactor,
+            registry=self.registry,
             quiet=self.quiet,
         )
 

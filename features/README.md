@@ -24,6 +24,7 @@ Claimed name prefixes — add yours here so two people don't pick the same one:
 | `watch.*` | B | | done |
 | `web.fetch` | B | | done |
 | `web.search` | B | | done — Google CSE (needs `GOOGLE_CSE_ID`) or DuckDuckGo |
+| `skill.*` | core | — | done — self-extension, do not edit casually |
 | `browser.*` | B | | TODO — browser-use |
 | `mail.*` | B | | TODO — needs Gmail OAuth |
 | `git.*` | A | | TODO |

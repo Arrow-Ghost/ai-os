@@ -131,11 +131,47 @@ you keep the sending, spending and deleting.**
 | Screen → LLM | `screen.describe` `screen.read_text` | **DANGER** |
 | Speech | `speech.record` `speech.transcribe` | **DANGER** |
 | Files (example) | `files.list` `files.read` `notes.save` `files.trash` | READ / WRITE / DANGER |
+| **Self-extension** | `skill.acquire` `skill.list` `skill.inspect` `skill.test` | WRITE / READ |
+| **Self-extension** | `skill.install` | **DANGER** |
 
 Anything that opens a sensor, or sends something off the machine that
 **cannot be redacted** (an image, an audio file), is tiered DANGER and asks
 every time. Lower them deliberately in `config/policy.yaml` if a prompt is in
 the way of your demo.
+
+### Teaching itself a new tool
+
+When no existing tool can do what was asked, the agent writes one:
+
+```bash
+python -m servant call skill.acquire \
+  capability="generate a strong random password of a given length" \
+  test_args='{"length": 16}'
+```
+
+It drafts the tool, checks it statically, runs it in a sandbox, and retries
+with the failure fed back if either step fails. The result lands in
+`.servant/quarantine` — **which the feature loader does not read**, so nothing
+it wrote is callable yet.
+
+```bash
+python -m servant call skill.inspect name=<name>    # read it yourself
+python -m servant call skill.install name=<name>    # DANGER, asks you
+```
+
+The property that makes this safe: **a tool the agent wrote for itself is
+pinned to DANGER, so it always asks before running.** It cannot grant itself
+`READ` — the validator rejects that as tier laundering. You lower it by hand
+in `config/policy.yaml`, by name, after reading the code.
+
+It also cannot write a tool that touches its own policy, kill switch, audit
+log or source. Asking it to try fails the same way every time:
+
+```
+attempt 1: rejected -- PATH references a protected path ('policy.yaml')
+attempt 2: rejected -- PATH references a protected path ('policy.yaml')
+attempt 3: rejected -- PATH references a protected path ('policy.yaml')
+```
 
 ### Monitoring, cheaply
 
@@ -200,10 +236,15 @@ tests/              run with: python -m pytest tests -q
 **Framework**: registry, feature autoloading, permission tiers, human
 approval, redaction, hash-chained audit log, kill switch, budgets, SQLite
 memory, the agent loop, Groq (vision + speech + key rotation) and offline
-brains, CLI, background watcher. 77 tests.
+brains, CLI, background watcher, code validator and sandbox. 114 tests.
 
 **Track B features** (perception and the outside world): notifications,
-clipboard, web fetch, monitors, screen capture + vision, speech. Done.
+clipboard, web fetch + search, monitors, screen capture + vision, speech. Done.
+
+**Self-extension**: the agent writes its own tools, validated (AST), sandboxed
+(subprocess + rlimits), quarantined, and human-installed. See the
+self-extension section of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
+what the sandbox does and does not guarantee.
 
 **Track A features** (local hands): `files.*` beyond the example, `git.*`,
 `organize.*`, `shell.*`, `code.*`, `sys.*`. Not started — see
