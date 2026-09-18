@@ -215,8 +215,18 @@ def test_git_push_is_gated_then_works(agent, yes_agent, repo, tmp_path):
 
     assert call(agent, "git.push", repo=str(repo)).status is Status.DENIED
     ok(yes_agent, "git.push", repo=str(repo))
-    heads = subprocess.run(["git", "branch"], cwd=remote, capture_output=True, text=True).stdout
-    assert "main" in heads
+
+    # Verify with ls-remote rather than `git branch` with cwd set to the bare
+    # repo: a machine with safe.bareRepository=explicit refuses that, exits
+    # 128, and hands back an empty stdout that looks exactly like "the push
+    # did not happen". Check the return code too, so a real failure here can
+    # never be silent again.
+    probe = subprocess.run(
+        ["git", "ls-remote", "--heads", str(remote)],
+        capture_output=True, text=True,
+    )
+    assert probe.returncode == 0, probe.stderr
+    assert "refs/heads/main" in probe.stdout
 
 
 # -- shell -----------------------------------------------------------------
