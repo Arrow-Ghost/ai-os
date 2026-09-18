@@ -23,7 +23,7 @@ Claimed name prefixes — add yours here so two people don't pick the same one:
 | `speech.*` | B | | done |
 | `watch.*` | B | | done |
 | `web.fetch` | B | | done |
-| `web.search` | B | | TODO — needs a search provider key |
+| `web.search` | B | | done — Google CSE (needs `GOOGLE_CSE_ID`) or DuckDuckGo |
 | `browser.*` | B | | TODO — browser-use |
 | `mail.*` | B | | TODO — needs Gmail OAuth |
 | `git.*` | A | | TODO |

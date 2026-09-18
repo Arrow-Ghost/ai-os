@@ -157,3 +157,110 @@ def test_declared_tiers(feature, module, tool_name, expected):
 
     feature(module)
     assert REGISTRY.get(tool_name).tier is expected
+
+
+# -- search ---------------------------------------------------------------
+
+DDG_FIXTURE = """
+<div class="result results_links">
+  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fconsole.groq.com%2Fdocs%2Frate-limits">
+    Rate Limits - GroqDocs</a>
+  <a class="result__snippet">Groq enforces per-minute request limits.</a>
+</div>
+<div class="result results_links">
+  <a class="result__a" href="https://example.com/direct">Direct Link Result</a>
+  <a class="result__snippet">A result whose href is not wrapped.</a>
+</div>
+"""
+
+
+def test_ddg_parser_extracts_and_unwraps_urls(feature):
+    mod = feature("web")
+    parser = mod._DuckDuckGoParser()
+    parser.feed(DDG_FIXTURE)
+
+    assert len(parser.results) == 2
+    first = parser.results[0]
+    assert "GroqDocs" in first["title"]
+    assert first["url"] == "https://console.groq.com/docs/rate-limits", "uddg= must be unwrapped"
+    assert "per-minute" in first["snippet"]
+    assert parser.results[1]["url"] == "https://example.com/direct", "plain hrefs pass through"
+
+
+def test_ddg_block_page_is_an_explicit_error(agent, feature, monkeypatch):
+    """A landing page with no results must not be reported as 'no results'."""
+    mod = feature("web")
+
+    class Blocked:
+        status, headers = 200, {"Content-Type": "text/html"}
+
+        def read(self, _=None):
+            return b"<html><body><h1>DuckDuckGo</h1></body></html>"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", lambda *a, **k: Blocked())
+    result = agent.call_tool("web.search", {"query": "anything", "backend": "duckduckgo"})
+
+    assert result.status is Status.ERROR
+    assert "blocks datacenter IPs" in result.error or "no results in it" in result.error
+
+
+def test_google_backend_requires_both_key_and_cse_id(agent, feature, monkeypatch):
+    """The API key alone cannot search -- it needs a search engine id."""
+    feature("web")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-fake")
+    monkeypatch.delenv("GOOGLE_CSE_ID", raising=False)
+
+    result = agent.call_tool("web.search", {"query": "x", "backend": "google"})
+    assert result.status is Status.ERROR
+    assert "GOOGLE_CSE_ID" in result.error
+
+
+def test_google_backend_parses_results(agent, feature, monkeypatch):
+    import json
+
+    mod = feature("web")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-fake")
+    monkeypatch.setenv("GOOGLE_CSE_ID", "cse-fake")
+
+    payload = json.dumps({"items": [
+        {"title": "Groq Rate Limits", "link": "https://console.groq.com/docs/rate-limits",
+         "snippet": "Requests per minute."},
+    ]}).encode()
+
+    class FakeResponse:
+        def read(self, _=None):
+            return payload
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(mod.urllib.request, "urlopen", lambda *a, **k: FakeResponse())
+    result = agent.call_tool("web.search", {"query": "groq limits", "backend": "google"})
+
+    assert result.status is Status.OK
+    assert "console.groq.com" in result.output
+    assert "via google" in result.output
+
+
+def test_auto_backend_prefers_google_when_configured(agent, feature, monkeypatch):
+    mod = feature("web")
+    monkeypatch.setenv("GOOGLE_API_KEY", "AIza-fake")
+    monkeypatch.setenv("GOOGLE_CSE_ID", "cse-fake")
+    called = {}
+
+    def fake_google(ctx, query, n):  # noqa: ARG001
+        called["google"] = True
+        return [{"title": "t", "url": "u", "snippet": "s"}]
+
+    monkeypatch.setattr(mod, "_search_google", fake_google)
+    agent.call_tool("web.search", {"query": "x"})
+    assert called.get("google") is True

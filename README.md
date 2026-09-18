@@ -54,7 +54,13 @@ Verified live on Groq (their model list changes — re-check before a demo):
 | speech (`speech.*`) | `whisper-large-v3-turbo` |
 
 `groq/compound*` (the models with built-in web search) return **413** on this
-account's tier, so `web.search` needs a separate provider key.
+account's tier, so `web.search` uses a separate backend:
+
+- **Google Programmable Search** — free, 100 queries/day. Needs `GOOGLE_API_KEY`
+  **and** `GOOGLE_CSE_ID` in `.env`; the key alone cannot search the web. Make
+  the engine free at [programmablesearchengine.google.com](https://programmablesearchengine.google.com/).
+- **DuckDuckGo** — no key at all, but it blocks datacenter IPs and changes its
+  markup without warning. Unverified; try `backend=duckduckgo` locally.
 
 ---
 
@@ -119,7 +125,7 @@ you keep the sending, spending and deleting.**
 |---|---|---|
 | Notifications | `notify.send` | WRITE |
 | Clipboard | `clipboard.read` `clipboard.write` | READ / WRITE |
-| Web | `web.fetch` | READ |
+| Web | `web.fetch` `web.search` | READ |
 | Monitors | `watch.check_file` `watch.check_log` `watch.check_endpoint` `watch.add` `watch.list` `watch.remove` | READ / WRITE |
 | Screen | `screen.capture` | READ |
 | Screen → LLM | `screen.describe` `screen.read_text` | **DANGER** |
