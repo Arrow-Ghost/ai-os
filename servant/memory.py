@@ -92,6 +92,33 @@ class Memory:
         rows = self._db.execute("SELECT key, value FROM facts ORDER BY key").fetchall()
         return {r["key"]: json.loads(r["value"]) for r in rows}
 
+    def search_facts(self, query: str, *, prefix: str = "", limit: int = 20) -> list[dict]:
+        """Keyword match on key and value. NOT semantic search -- there is no
+        embedding model here, deliberately (see docs/ARCHITECTURE.md). This is
+        a plain SQL LIKE over what memory.remember has stored, which is honest
+        about what it is: exact and substring recall, not fuzzy-meaning recall.
+        """
+        needle = f"%{query.lower()}%"
+        sql = "SELECT key, value, ts FROM facts WHERE (LOWER(key) LIKE ? OR LOWER(value) LIKE ?)"
+        params: list[Any] = [needle, needle]
+        if prefix:
+            sql += " AND key LIKE ?"
+            params.append(f"{prefix}%")
+        sql += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        rows = self._db.execute(sql, params).fetchall()
+        return [{"key": r["key"], "value": json.loads(r["value"]), "ts": r["ts"]} for r in rows]
+
+    def search_episodes(self, query: str, *, limit: int = 10) -> list[dict]:
+        """Substring match over the episodic log -- what the agent has said or done."""
+        needle = f"%{query.lower()}%"
+        rows = self._db.execute(
+            "SELECT run_id, ts, role, content FROM episodes WHERE LOWER(content) LIKE ? "
+            "ORDER BY id DESC LIMIT ?",
+            (needle, limit),
+        ).fetchall()
+        return [dict(r) for r in reversed(rows)]
+
     # -- outcomes ----------------------------------------------------------
     def record_outcome(self, tool: str, ok: bool, detail: str = "") -> None:
         self._db.execute(

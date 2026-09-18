@@ -7,6 +7,11 @@ PyYAML>=6.0
 # --- needed for brain.provider: groq ---
 openai>=1.40.0
 
+# --- calendar.* (already pulled in transitively by browser-use, listed here
+#     so calendar works even if browser-use is skipped) ---
+google-auth-oauthlib>=1.2
+google-api-python-client>=2.100
+
 # --- Track B features ---
 ddgs>=9.0                # web.search -- keyless DuckDuckGo, no quota
 playwright>=1.47         # browser.browse (uses your installed Chrome:

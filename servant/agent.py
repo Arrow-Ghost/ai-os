@@ -29,6 +29,7 @@ from .governance import (
     Redactor,
     Stopped,
 )
+from .injection import guard_and_wrap
 from .loader import LoadReport, load_features
 from .memory import Memory
 from .registry import REGISTRY
@@ -99,6 +100,7 @@ class Agent:
             redactor=self.redactor,
             registry=self.registry,
             killswitch=self.killswitch,
+            budget=self.budget,
             quiet=self.quiet,
         )
 
@@ -162,6 +164,16 @@ class Agent:
                 result.steps += 1
 
                 observation = action.as_observation()
+                spec = self.registry.get(decision.tool)
+                if action.ok and spec is not None and spec.untrusted:
+                    # This tool's output is text from OUTSIDE the machine (a
+                    # page, an email, a screenshot). Wrap it so the model sees
+                    # it as data, never as an instruction, and flag it if a
+                    # cheap classifier thinks it looks like an injection.
+                    observation = guard_and_wrap(
+                        decision.tool, observation,
+                        client=getattr(self.brain, "raw_client", None),
+                    )
                 # The shape the chat API expects: the assistant's tool call, then
                 # a `tool` message answering that exact call id.
                 history.extend([

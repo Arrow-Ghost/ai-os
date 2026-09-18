@@ -52,6 +52,7 @@ def tool(
     params: dict[str, str] | None = None,
     undo: str | None = None,
     examples: Iterable[str] = (),
+    untrusted: bool = False,
 ):
     """Register a function as a capability of the agent.
 
@@ -70,6 +71,10 @@ def tool(
         undo:        one line telling the human how to reverse this, shown in
                      the approval prompt. Required in spirit for WRITE/DANGER.
         examples:    sample invocations, shown in `python -m servant tools -v`.
+        untrusted:   True if this tool's return value is text pulled in from
+                     outside the machine (a web page, an email, a screenshot,
+                     the clipboard). The agent loop wraps that output so the
+                     model treats it as DATA, never as an instruction to obey.
     """
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -81,6 +86,7 @@ def tool(
             params=params,
             undo=undo,
             examples=examples,
+            untrusted=untrusted,
         )
         REGISTRY.add(spec)
         func.__tool_spec__ = spec  # type: ignore[attr-defined]

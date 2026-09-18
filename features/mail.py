@@ -120,6 +120,7 @@ def _body(message) -> str:
         "unread_only": "Only messages you have not read",
         "search": "IMAP search term matching subject or sender, e.g. 'github'",
     },
+    untrusted=True,
 )
 def mail_list(ctx, folder: str = "INBOX", limit: int = 10, unread_only: bool = False, search: str = "") -> str:
     """List recent emails: id, date, sender and subject. Use before mail.read."""
@@ -170,6 +171,7 @@ def mail_list(ctx, folder: str = "INBOX", limit: int = 10, unread_only: bool = F
         "folder": "Mailbox it is in",
         "max_chars": "Truncate the body after this many characters",
     },
+    untrusted=True,
 )
 def mail_read(ctx, message_id: str, folder: str = "INBOX", max_chars: int = 4000) -> str:
     """Read one email in full. Secrets in the body are masked before returning."""

@@ -84,6 +84,10 @@ class OfflineBrain:
         self.calls += 1
         return f"[offline brain] would have looked at {Path(image_path).name} for: {prompt[:120]}"
 
+    @property
+    def raw_client(self):
+        return None  # nothing to screen with offline; guard_and_wrap handles None
+
     def transcribe(self, audio_path: str | Path) -> str:
         self.calls += 1
         return f"[offline brain] would have transcribed {Path(audio_path).name}"
@@ -193,6 +197,11 @@ class GroqBrain:
             model=self.model_vision,
         )
         return (response.choices[0].message.content or "").strip()
+
+    @property
+    def raw_client(self):
+        """The underlying OpenAI-compatible client, for the injection guard only."""
+        return self._client
 
     def transcribe(self, audio_path: str | Path) -> str:
         """Speech to text via Groq-hosted Whisper. No local model needed."""

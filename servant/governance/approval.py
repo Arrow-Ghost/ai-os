@@ -32,6 +32,7 @@ class ApprovalDecision:
 class Approver(Protocol):
     def request(self, req: ApprovalRequest) -> ApprovalDecision: ...
     def confirm(self, question: str) -> bool: ...
+    def ask_open(self, question: str) -> str | None: ...
 
 
 class ConsoleApprover:
@@ -71,6 +72,15 @@ class ConsoleApprover:
         except (EOFError, KeyboardInterrupt):
             return False
 
+    def ask_open(self, question: str) -> str | None:
+        """Free-text question. None if there is nobody there to answer."""
+        print(f"\n  ? {question}")
+        try:
+            answer = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return None
+        return answer or None
+
 
 class DenyAllApprover:
     """For tests and CI. Nothing that needs a human ever runs."""
@@ -80,6 +90,9 @@ class DenyAllApprover:
 
     def confirm(self, question: str) -> bool:  # noqa: ARG002
         return False
+
+    def ask_open(self, question: str) -> str | None:  # noqa: ARG002
+        return None
 
 
 class AutoApprover:
@@ -97,3 +110,8 @@ class AutoApprover:
         if self.announce:
             print(f"  [auto-confirmed] {question}")
         return True
+
+    def ask_open(self, question: str) -> str | None:
+        if self.announce:
+            print(f"  [auto-mode: no one to ask] {question}")
+        return None

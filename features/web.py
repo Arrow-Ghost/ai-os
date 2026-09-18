@@ -87,6 +87,7 @@ class _TextExtractor(HTMLParser):
         "max_chars": "Truncate the extracted text after this many characters",
         "raw": "True to return the raw body instead of extracted text",
     },
+    untrusted=True,
 )
 def web_fetch(ctx, url: str, max_chars: int = 6000, raw: bool = False) -> str:
     """Fetch a web page and return its readable text. Use before answering anything time-sensitive."""
@@ -192,6 +193,7 @@ def _search_ddg(ctx, query: str, max_results: int) -> list[dict]:  # noqa: ARG00
         "max_results": "How many results to return (1-10)",
         "backend": "auto | ddg | google",
     },
+    untrusted=True,
 )
 def web_search(ctx, query: str, max_results: int = 5, backend: str = "auto") -> str:
     """Search the web and return titles, URLs and snippets. Follow up with web.fetch to read one."""

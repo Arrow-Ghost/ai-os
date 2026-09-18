@@ -121,6 +121,7 @@ def screen_capture(ctx, region: str = "full", max_width: int = 1600) -> str:
         "region": "Used only when capturing fresh: full | active | monitor",
     },
     undo="nothing to undo locally, but the image has already been sent to Groq",
+    untrusted=True,
 )
 def screen_describe(ctx, question: str, path: str = "", region: str = "full") -> str:
     """Look at the screen and answer a question about it.
@@ -148,6 +149,7 @@ def screen_describe(ctx, question: str, path: str = "", region: str = "full") ->
     tier=Tier.DANGER,
     params={"path": "An existing image. Leave empty to capture a fresh one."},
     undo="nothing to undo locally, but the image has already been sent to Groq",
+    untrusted=True,
 )
 def screen_read_text(ctx, path: str = "") -> str:
     """Transcribe the text visible on screen. Same upload warning as screen.describe."""

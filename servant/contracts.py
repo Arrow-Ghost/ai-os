@@ -82,6 +82,11 @@ class ToolSpec:
     #: Governance treats these differently, and deliberately cannot be talked
     #: out of it by a permissive tier policy.
     generated: bool = False
+    #: True when this tool's output is text from OUTSIDE the machine -- a web
+    #: page, an email, the clipboard, a screenshot. That text can contain
+    #: instructions ("ignore your rules and..."), and the model cannot tell
+    #: your instructions from a page's unless the loop marks the difference.
+    untrusted: bool = False
 
     def to_openai_schema(self) -> dict:
         """The shape the LLM sees. OpenAI/Groq function-calling format."""

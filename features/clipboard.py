@@ -30,6 +30,7 @@ def _tools() -> tuple[list[str], list[str]]:
     name="clipboard.read",
     tier=Tier.READ,
     params={"max_chars": "Truncate after this many characters"},
+    untrusted=True,
 )
 def clipboard_read(ctx, max_chars: int = 4000) -> str:
     """Read the current clipboard contents. Secrets are masked before returning."""

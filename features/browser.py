@@ -71,6 +71,7 @@ def _split(value: str) -> list[str]:
         "vision": "True to let it look at screenshots. Slower and pricier; needed for canvas-heavy sites.",
     },
     undo="depends entirely on what it did -- check the browser and the sites it visited",
+    untrusted=True,
 )
 def browser_task(
     ctx,
@@ -347,6 +348,7 @@ def _host_allowed(url: str, domains: list[str]) -> bool:
         "headless": "True to hide the browser, False to watch it work",
     },
     undo="depends what it did -- check the sites it visited",
+    untrusted=True,
 )
 def browser_browse(
     ctx,

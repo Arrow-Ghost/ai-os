@@ -80,6 +80,12 @@ HARD RULES
 - Import ONLY from servant.sdk plus the Python standard library.
 - Never import servant.governance, servant.config, servant.executor, importlib,
   ctypes, pickle or marshal.
+- Never import subprocess, socket, smtplib, ftplib, urllib.request, requests,
+  or asyncio. If the task needs the network, email or a shell command, call
+  the existing tool for it instead: ctx.call("web.fetch", url=...),
+  ctx.call("mail.send", to=..., subject=..., body=...),
+  ctx.call("shell.run", command=...). This is not optional -- those imports
+  are rejected before your code ever runs.
 - Never call eval, exec, compile or __import__.
 - Never use shell=True. Pass subprocess a list of arguments.
 - Never read or write: config/policy.yaml, .env, .servant/STOP, the servant/

@@ -119,6 +119,7 @@ def build_spec(
     params: dict[str, str] | None = None,
     undo: str | None = None,
     examples: Iterable[str] = (),
+    untrusted: bool = False,
 ) -> ToolSpec:
     """Turn a plain python function into a ToolSpec by reading its signature.
 
@@ -170,4 +171,5 @@ def build_spec(
         undo=undo,
         examples=tuple(examples),
         generated=generated,
+        untrusted=untrusted,
     )

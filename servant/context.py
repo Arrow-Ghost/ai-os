@@ -28,6 +28,7 @@ class Context:
         redactor=None,
         registry=None,
         killswitch=None,
+        budget=None,
         quiet: bool = False,
     ):
         self.run_id = run_id
@@ -37,6 +38,9 @@ class Context:
         #: Read-only view of every registered tool. Use it to introspect what
         #: exists; you still have to go through ctx.call() to run anything.
         self.registry = registry
+        #: Read-only view of this run's step/time budget. Used by
+        #: budget.status; nothing else should need it.
+        self.budget = budget
         self._audit = audit
         self._approver = approver
         self._brain = brain
@@ -57,6 +61,18 @@ class Context:
         self._audit.write("feature.ask", self.run_id, question=question)
         answer = self._approver.confirm(question)
         self._audit.write("feature.ask.answer", self.run_id, question=question, answer=answer)
+        return answer
+
+    def ask_open(self, question: str) -> str | None:
+        """Ask the human a free-text question mid-tool. Blocks until answered.
+
+        Returns None if there is nobody there to answer (no terminal, or a
+        non-interactive approver) -- callers must handle that, never assume
+        an answer came back.
+        """
+        self._audit.write("feature.ask_open", self.run_id, question=question)
+        answer = self._approver.ask_open(question)
+        self._audit.write("feature.ask_open.answer", self.run_id, question=question, answer=answer)
         return answer
 
     # -- thinking ----------------------------------------------------------
@@ -84,6 +100,19 @@ class Context:
         if self._brain is None:
             raise RuntimeError("no brain attached to this context (offline run?)")
         return self._brain.transcribe(audio_path)
+
+    def brain_stats(self) -> dict:
+        """How many model calls and key rotations this run has made so far.
+
+        Used by budget.status. Deliberately narrow -- it does not hand out the
+        brain object itself, just two counters.
+        """
+        if self._brain is None:
+            return {"calls": None, "rotations": None}
+        return {
+            "calls": getattr(self._brain, "calls", None),
+            "rotations": getattr(self._brain, "rotations", None),
+        }
 
     # -- calling other tools ----------------------------------------------
     def call(self, tool_name: str, **args: Any) -> ActionResult:

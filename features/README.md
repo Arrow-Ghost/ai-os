@@ -37,5 +37,9 @@ Claimed name prefixes — add yours here so two people don't pick the same one:
 | `web.fetch` | B | | done |
 | `web.search` | B | | done — Google CSE (needs `GOOGLE_CSE_ID`) or DuckDuckGo |
 | `skill.*` | core | — | done — self-extension, do not edit casually |
+| `memory.*` | — | — | done — keyword recall on SQLite, not semantic |
+| `agent.*`, `budget.*` | — | — | done — reads the real audit log |
+| `ask.*` | — | — | done — free-text question, blocks for an answer |
+| `calendar.*` | — | — | done — needs `python -m servant.calendar_setup` once |
 | `browser.*` | B | | done — browser-use + Chrome/CDP |
 | `mail.*` | B | | done — IMAP/SMTP, app password |
