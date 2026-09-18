@@ -15,7 +15,7 @@ in `features/` and nothing else.
 ## Quick start
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate   # Python 3.10+
 pip install -r requirements.txt
 
 python -m servant doctor     # is this machine set up?
@@ -31,16 +31,17 @@ brain on, and `PyYAML` to edit `config/policy.yaml`.
 
 ```bash
 cp .env.example .env         # add GROQ_API_KEY, or GROQ_API_KEYS for several
-# then in config/policy.yaml:  brain.provider: groq
+python -m servant doctor     # "brain provider  auto -> groq"
 python -m servant run "read servant/registry.py and save a summary note"
 ```
+
+`brain.provider: auto` (the default in `config/policy.yaml`) uses Groq when a
+key is present and the offline stub when it is not, so teammates without a
+key can still build and test features on day one.
 
 Set `GROQ_API_KEYS` to a comma-separated list and the brain rotates to the
 next key on a rate limit — Groq's free tier is low enough to run out
 mid-demo.
-
-`brain.provider: offline` needs no API key at all, so your team can build and
-test features without one.
 
 ### Models
 
@@ -292,7 +293,7 @@ tests/              run with: python -m pytest tests -q
 **Framework**: registry, feature autoloading, permission tiers, human
 approval, redaction, hash-chained audit log, kill switch, budgets, SQLite
 memory, the agent loop, Groq (vision + speech + key rotation) and offline
-brains, CLI, background watcher, code validator and sandbox. 114 tests.
+brains, CLI, background watcher, code validator and sandbox. 152 tests.
 
 **Track B features** (perception and the outside world): notifications,
 clipboard, web fetch + search, monitors, screen capture + vision, speech. Done.
@@ -302,8 +303,10 @@ clipboard, web fetch + search, monitors, screen capture + vision, speech. Done.
 self-extension section of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for
 what the sandbox does and does not guarantee.
 
-**Track A features** (local hands): `files.*` beyond the example, `git.*`,
-`organize.*`, `shell.*`, `code.*`, `sys.*`. Not started — see
+**Track A features** (local hands): `files.*` (trash-not-delete, with
+restore), `organize.*` (dry-run plan, then approved apply), `git.*`, `code.*`
+(read, test, patch on a branch), `shell.*` (allowlisted in
+`config/policy.yaml`), `sys.*`. Done — see
 [features/README.md](features/README.md) for the prefix table.
 
 **Still open in Track B**: `web.search` (needs a provider key), `browser.*`

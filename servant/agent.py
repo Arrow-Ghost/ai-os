@@ -10,6 +10,7 @@ it probably belongs in a tool or in the policy.
 
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -129,7 +130,13 @@ class Agent:
             for turn in range(max_llm_calls):
                 self.killswitch.check()
 
-                decision = self.brain.decide(goal, history, schemas)
+                try:
+                    decision = self.brain.decide(goal, history, schemas)
+                except Exception as exc:  # noqa: BLE001 -- no key, no network, bad model
+                    result.answer = f"The brain failed, so nothing more was done: {exc}"
+                    self.audit.write("think", run_id, turn=turn, decision="error", error=str(exc))
+                    self._say(f"\n[brain error] {exc}")
+                    break
 
                 if isinstance(decision, Finish):
                     result.answer = decision.message
@@ -154,9 +161,19 @@ class Agent:
                 result.steps += 1
 
                 observation = action.as_observation()
+                # The shape the chat API expects: the assistant's tool call, then
+                # a `tool` message answering that exact call id.
                 history.extend([
-                    {"role": "assistant", "content": f"calling {decision.tool} with {decision.args}"},
-                    {"role": "user", "content": f"result: {observation[:4000]}"},
+                    {
+                        "role": "assistant",
+                        "content": decision.rationale or None,
+                        "tool_calls": [{
+                            "id": decision.id,
+                            "type": "function",
+                            "function": {"name": decision.tool, "arguments": json.dumps(decision.args)},
+                        }],
+                    },
+                    {"role": "tool", "tool_call_id": decision.id, "content": observation[:4000]},
                 ])
                 self.memory.add_episode(run_id, "tool", f"{decision.tool} -> {observation[:500]}")
 

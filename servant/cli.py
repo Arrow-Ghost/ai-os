@@ -36,6 +36,7 @@ DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
 
 
 def main(argv: list[str] | None = None) -> int:
+    _utf8_output()
     parser = argparse.ArgumentParser(prog="servant", description="A governed laptop agent.")
     parser.add_argument("--policy", help="path to an alternative policy.yaml")
     parser.add_argument(
@@ -272,7 +273,10 @@ def _cmd_doctor(args) -> int:
     config = load_config(args.policy)
     print(f"\n{BOLD}servant doctor{RESET}\n")
     print(f"  policy source   {config.source}")
-    print(f"  brain provider  {config.get('brain.provider')}")
+    provider = str(config.get("brain.provider"))
+    if provider == "auto":
+        provider = f"auto -> {'groq' if config.secret('GROQ_API_KEY') else 'offline (no key)'}"
+    print(f"  brain provider  {provider}")
     print(f"  GROQ_API_KEY    {'set' if config.secret('GROQ_API_KEY') else 'NOT set'}")
     print(f"  state dir       {config.path('state_dir')}")
 
@@ -291,6 +295,16 @@ def _cmd_doctor(args) -> int:
     print(f"  features        {report.summary() if report else 'not loaded'}")
     print()
     return 1 if (report and report.failed) else 0
+
+
+def _utf8_output() -> None:
+    """Windows pipes and older consoles default to cp1252, which cannot encode
+    the arrows the agent prints. Never let a status line crash a run."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
 
 def _coerce(value: str, json_type: str):

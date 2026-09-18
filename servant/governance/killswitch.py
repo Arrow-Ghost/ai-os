@@ -30,7 +30,7 @@ class KillSwitch:
         if self._event.is_set():
             return True
         if self.flag_file.exists():
-            self._reason = self.flag_file.read_text().strip() or "stop flag file present"
+            self._reason = self.flag_file.read_text(encoding="utf-8", errors="replace").strip() or "stop flag file present"
             return True
         return False
 
@@ -48,7 +48,7 @@ class KillSwitch:
         self._reason = reason
         self._event.set()
         self.flag_file.parent.mkdir(parents=True, exist_ok=True)
-        self.flag_file.write_text(reason)
+        self.flag_file.write_text(reason, encoding="utf-8")
 
     def release(self) -> None:
         self._event.clear()
