@@ -41,8 +41,11 @@ def clean_registry():
 
 @pytest.fixture
 def config(tmp_path):
+    import copy
+
+    # deepcopy so a test that edits tier_policy cannot leak into the next one.
     data = {
-        **DEFAULT_POLICY,
+        **copy.deepcopy(DEFAULT_POLICY),
         "paths": {
             "state_dir": ".servant",
             "audit_log": ".servant/audit.jsonl",

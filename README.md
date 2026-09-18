@@ -99,6 +99,42 @@ reasonable to give it real access.
 
 ---
 
+## Full access
+
+For a demo on a machine you control, skip the prompts entirely:
+
+```bash
+python -m servant --full-access run "tidy my downloads folder"
+```
+
+Every tier runs automatically, including tools the agent wrote for itself. It
+prints a red banner so the mode is obvious on a projector.
+
+Still active in this mode, because none of it blocks anything:
+
+| | |
+|---|---|
+| kill switch | `touch .servant/STOP` or Ctrl-C — always wins |
+| audit log | `tail -f .servant/audit.jsonl` |
+| redaction | your API keys still never reach Groq |
+| forbidden paths | `~/.ssh`, `~/.aws`, `.env` stay unreadable |
+| budgets | a run still stops after `max_steps` |
+| `FORBIDDEN` tier | the one slot that survives full access |
+
+To keep one specific tool asking while everything else runs free, pin it in
+`config/policy.full-access.yaml`:
+
+```yaml
+governance:
+  tier_overrides:
+    files.trash: forbidden
+    skill.install: forbidden
+```
+
+The difference between the cautious profile and this one is four words in a
+config file. That is the design: **the permission model is yours to move, not
+the agent's.**
+
 ## The permission model
 
 Every tool declares how dangerous it is. The policy maps that to behaviour,

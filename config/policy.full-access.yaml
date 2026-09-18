@@ -1,0 +1,95 @@
+# =====================================================================
+#  FULL ACCESS PROFILE
+#
+#  Nothing asks. Every tool runs the moment the agent decides to call it,
+#  including tools the agent wrote for itself.
+#
+#  Use it with:
+#      python -m servant --policy config/policy.full-access.yaml run "..."
+#  or the shorthand:
+#      python -m servant --full-access run "..."
+#
+#  This is the right setting for a demo on a machine you control, and the
+#  wrong one for anything you would be upset to lose. The difference between
+#  this file and config/policy.yaml is four words, which is the point: the
+#  permission model is yours to move, not the agent's.
+#
+#  STILL ACTIVE IN THIS MODE (none of these block anything):
+#    * the kill switch    -- touch .servant/STOP, or Ctrl-C
+#    * the audit log      -- tail -f .servant/audit.jsonl
+#    * redaction          -- your API keys still never reach Groq
+#    * forbidden_paths    -- ~/.ssh, ~/.aws, .env stay unreadable
+#    * budgets            -- a run still stops after max_steps
+#
+#  TO PIN ONE TOOL BACK: add it to governance.tier_overrides below.
+# =====================================================================
+
+brain:
+  provider: groq
+  base_url: https://api.groq.com/openai/v1
+  model_fast: openai/gpt-oss-20b
+  model_smart: openai/gpt-oss-120b
+  model_vision: qwen/qwen3.8-27b
+  model_transcribe: whisper-large-v3-turbo
+  temperature: 0.2
+  max_retries: 3
+  max_image_bytes: 4000000
+
+governance:
+  tier_policy:
+    read: auto
+    write: auto
+    danger: auto        # <- the whole difference. Nothing asks.
+    forbidden: block    # <- the one slot left for "never, whatever happens"
+
+  # Even in full access, you can force a specific tool to ask. Uncomment the
+  # ones you do not want running unattended:
+  tier_overrides: {}
+  #  files.trash: forbidden
+  #  skill.install: forbidden
+  #  speech.record: forbidden
+
+  denylist: []
+
+  # Confidence no longer escalates to a human, because there is no human in
+  # the loop in this mode. Set it above 0 only if you re-enable approvals.
+  confidence_floor: 0.0
+
+  killswitch_file: .servant/STOP
+
+budgets:
+  max_steps: 25          # higher, since nothing pauses to ask
+  max_llm_calls: 40
+  max_seconds: 600
+  max_spend_usd: 0.0     # still zero. Nothing here authorises spending money.
+
+skills:
+  enabled: true
+  tier_floor: danger     # generated tools are still DANGER-tier, but DANGER
+                         # is now 'auto', so they run. The floor stays as the
+                         # marker that makes tier_overrides above work.
+  max_attempts: 3
+  sandbox_timeout: 20
+  sandbox_memory_mb: 512
+
+redaction:
+  enabled: true          # leave this on. It costs you nothing and it is the
+                         # only thing stopping your keys reaching the model.
+  patterns:
+    - 'sk-[A-Za-z0-9_\-]{16,}'
+    - 'gsk_[A-Za-z0-9_\-]{16,}'
+    - 'AIza[A-Za-z0-9_\-]{30,}'
+    - 'AKIA[0-9A-Z]{16}'
+    - 'ghp_[A-Za-z0-9]{36}'
+    - '(?i)\b(api[_-]?key|secret|password|passwd|token)\b\s*[:=]\s*\S+'
+  forbidden_paths:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.gnupg
+    - .env
+
+paths:
+  state_dir: .servant
+  audit_log: .servant/audit.jsonl
+  memory_db: .servant/memory.db
+  features_dir: features

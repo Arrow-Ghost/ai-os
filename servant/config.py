@@ -11,6 +11,7 @@ Two rules that matter:
 
 from __future__ import annotations
 
+import copy
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,7 +104,7 @@ DEFAULT_POLICY: dict[str, Any] = {
 
 
 def _deep_merge(base: dict, over: dict) -> dict:
-    out = dict(base)
+    out = copy.deepcopy(base)
     for k, v in over.items():
         if isinstance(v, dict) and isinstance(out.get(k), dict):
             out[k] = _deep_merge(out[k], v)
@@ -116,7 +117,10 @@ def _deep_merge(base: dict, over: dict) -> dict:
 class Config:
     """Read-only view over merged policy. Access with dotted paths."""
 
-    data: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_POLICY))
+    # deepcopy, not dict(): a shallow copy shares the nested dicts with the
+    # module-level DEFAULT_POLICY, so mutating config.data["governance"] would
+    # silently rewrite the defaults for the whole process.
+    data: dict[str, Any] = field(default_factory=lambda: copy.deepcopy(DEFAULT_POLICY))
     root: Path = PROJECT_ROOT
     source: str = "defaults"
 
@@ -149,7 +153,7 @@ def load_config(policy_file: str | Path | None = None) -> Config:
     """
     _load_dotenv(PROJECT_ROOT / ".env")
 
-    data = dict(DEFAULT_POLICY)
+    data = copy.deepcopy(DEFAULT_POLICY)
     source = "defaults"
     candidate = Path(policy_file) if policy_file else PROJECT_ROOT / "config" / "policy.yaml"
 

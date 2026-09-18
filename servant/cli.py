@@ -20,7 +20,7 @@ import sys
 
 from .agent import build_agent
 from .audit import AuditLog
-from .config import load_config
+from .config import PROJECT_ROOT, load_config
 from .contracts import Tier
 from .governance import (
     AutoApprover,
@@ -38,6 +38,10 @@ DIM, BOLD, RESET = "\033[2m", "\033[1m", "\033[0m"
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="servant", description="A governed laptop agent.")
     parser.add_argument("--policy", help="path to an alternative policy.yaml")
+    parser.add_argument(
+        "--full-access", action="store_true",
+        help="run every tier automatically -- nothing asks. Kill switch and audit stay on.",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_tools = sub.add_parser("tools", help="list registered tools")
@@ -99,7 +103,20 @@ def _dispatch(args) -> int:
         else DenyAllApprover() if getattr(args, "non_interactive", False) or not interactive
         else ConsoleApprover()
     )
-    agent = build_agent(policy_file=args.policy, approver=approver)
+    policy_file = args.policy
+    if args.full_access and not policy_file:
+        candidate = PROJECT_ROOT / "config" / "policy.full-access.yaml"
+        policy_file = candidate if candidate.exists() else None
+
+    agent = build_agent(policy_file=policy_file, approver=approver)
+
+    if args.full_access:
+        # Belt and braces: the flag must work even without the profile file.
+        agent.policy.tier_policy = {
+            "read": "auto", "write": "auto", "danger": "auto", "forbidden": "block",
+        }
+        agent.policy.confidence_floor = 0.0
+        _full_access_banner(agent)
 
     if args.command == "tools":
         return _cmd_tools(agent, args)
@@ -115,6 +132,19 @@ def _dispatch(args) -> int:
 
 
 # --------------------------------------------------------------------------
+
+def _full_access_banner(agent) -> None:
+    """Make the mode impossible to miss -- including on a demo projector."""
+    pinned = [f"{k}->{v}" for k, v in agent.policy.tier_overrides.items()]
+    print(f"\n{TIER_COLOR['danger']}{BOLD}{'=' * 62}")
+    print("  FULL ACCESS -- every tier runs automatically, nothing asks")
+    print(f"{'=' * 62}{RESET}")
+    print(f"  {DIM}stop:  touch .servant/STOP   or   Ctrl-C{RESET}")
+    print(f"  {DIM}watch: tail -f {agent.audit.path}{RESET}")
+    if pinned:
+        print(f"  {DIM}pinned back: {', '.join(pinned)}{RESET}")
+    print()
+
 
 def _cmd_tools(agent, args) -> int:
     report = agent.load_report
