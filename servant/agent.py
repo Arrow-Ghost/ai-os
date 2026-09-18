@@ -98,6 +98,7 @@ class Agent:
             executor=self.executor,
             redactor=self.redactor,
             registry=self.registry,
+            killswitch=self.killswitch,
             quiet=self.quiet,
         )
 

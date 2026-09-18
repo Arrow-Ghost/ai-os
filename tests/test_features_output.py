@@ -161,53 +161,25 @@ def test_declared_tiers(feature, module, tool_name, expected):
 
 # -- search ---------------------------------------------------------------
 
-DDG_FIXTURE = """
-<div class="result results_links">
-  <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fconsole.groq.com%2Fdocs%2Frate-limits">
-    Rate Limits - GroqDocs</a>
-  <a class="result__snippet">Groq enforces per-minute request limits.</a>
-</div>
-<div class="result results_links">
-  <a class="result__a" href="https://example.com/direct">Direct Link Result</a>
-  <a class="result__snippet">A result whose href is not wrapped.</a>
-</div>
-"""
-
-
-def test_ddg_parser_extracts_and_unwraps_urls(feature):
+def test_ddg_backend_returns_results(agent, feature, monkeypatch):
+    """The default backend goes through the ddgs package, not raw HTML."""
     mod = feature("web")
-    parser = mod._DuckDuckGoParser()
-    parser.feed(DDG_FIXTURE)
+    monkeypatch.setattr(
+        mod, "_search_ddg",
+        lambda ctx, q, n: [{"title": "Rate Limits", "url": "https://console.groq.com/docs",
+                            "snippet": "about limits"}],
+    )
+    result = agent.call_tool("web.search", {"query": "groq limits"})
+    assert result.status is Status.OK
+    assert "console.groq.com" in result.output
+    assert "via ddg" in result.output
 
-    assert len(parser.results) == 2
-    first = parser.results[0]
-    assert "GroqDocs" in first["title"]
-    assert first["url"] == "https://console.groq.com/docs/rate-limits", "uddg= must be unwrapped"
-    assert "per-minute" in first["snippet"]
-    assert parser.results[1]["url"] == "https://example.com/direct", "plain hrefs pass through"
 
-
-def test_ddg_block_page_is_an_explicit_error(agent, feature, monkeypatch):
-    """A landing page with no results must not be reported as 'no results'."""
-    mod = feature("web")
-
-    class Blocked:
-        status, headers = 200, {"Content-Type": "text/html"}
-
-        def read(self, _=None):
-            return b"<html><body><h1>DuckDuckGo</h1></body></html>"
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *a):
-            return False
-
-    monkeypatch.setattr(mod.urllib.request, "urlopen", lambda *a, **k: Blocked())
-    result = agent.call_tool("web.search", {"query": "anything", "backend": "duckduckgo"})
-
+def test_unknown_backend_is_rejected(agent, feature):
+    feature("web")
+    result = agent.call_tool("web.search", {"query": "x", "backend": "altavista"})
     assert result.status is Status.ERROR
-    assert "blocks datacenter IPs" in result.error or "no results in it" in result.error
+    assert "ddg" in result.error
 
 
 def test_google_backend_requires_both_key_and_cse_id(agent, feature, monkeypatch):
@@ -251,16 +223,23 @@ def test_google_backend_parses_results(agent, feature, monkeypatch):
     assert "via google" in result.output
 
 
-def test_auto_backend_prefers_google_when_configured(agent, feature, monkeypatch):
+def test_auto_backend_uses_ddg_even_when_google_is_configured(agent, feature, monkeypatch):
+    """Google's engines can no longer search the whole web, so ddg is the default.
+
+    "Search the entire web" is deprecated, which leaves a Programmable Search
+    engine restricted to the sites you list -- fine for searching one site,
+    wrong as a general default.
+    """
     mod = feature("web")
     monkeypatch.setenv("GOOGLE_API_KEY", "AIza-fake")
     monkeypatch.setenv("GOOGLE_CSE_ID", "cse-fake")
     called = {}
 
-    def fake_google(ctx, query, n):  # noqa: ARG001
-        called["google"] = True
-        return [{"title": "t", "url": "u", "snippet": "s"}]
+    monkeypatch.setattr(mod, "_search_ddg",
+                        lambda ctx, q, n: called.setdefault("ddg", True) and [] or [])
+    monkeypatch.setattr(mod, "_search_google",
+                        lambda ctx, q, n: called.setdefault("google", True) and [] or [])
 
-    monkeypatch.setattr(mod, "_search_google", fake_google)
     agent.call_tool("web.search", {"query": "x"})
-    assert called.get("google") is True
+    assert called.get("ddg") is True
+    assert "google" not in called

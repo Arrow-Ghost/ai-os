@@ -8,6 +8,9 @@ PyYAML>=6.0
 openai>=1.40.0
 
 # --- Track B features ---
+ddgs>=9.0                # web.search -- keyless DuckDuckGo, no quota
+playwright>=1.47         # browser.browse (uses your installed Chrome:
+                         #   channel="chrome", so no browser download needed)
 apscheduler>=3.10        # servant watch -- interval scheduling for monitors
 Pillow>=10.0             # screen.* -- downscales screenshots to save tokens
 

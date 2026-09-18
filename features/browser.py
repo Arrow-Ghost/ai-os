@@ -21,7 +21,15 @@ values through browser-use's sensitive_data mechanism: the model sees a
 placeholder like <secret>gh_pw</secret>, never the value, and the value is
 masked in its logs.
 
-TOKEN BUDGET -- READ THIS BEFORE DEMOING IT.
+TWO TOOLS, PICK BY TOKEN BUDGET.
+  browser.browse  a small loop written here: a compact page summary (~1k
+                  tokens a step) and five actions. Fits inside a free tier,
+                  runs a step in about a second, and goes through ctx.think
+                  so it inherits key rotation and redaction. Start here.
+  browser.task    full browser-use. Far more capable on complex sites, and
+                  far more expensive -- see below.
+
+TOKEN BUDGET -- READ THIS BEFORE DEMOING browser.task.
 browser-use sends a large system prompt plus the page's clickable-element tree
 on EVERY step. Measured against Groq's free tier, which allows 8,000 tokens
 per minute, a single step consumes roughly the whole minute's allowance, even
@@ -38,7 +46,9 @@ web.fetch / web.search, which cost a fraction of the tokens.
 from __future__ import annotations
 
 import asyncio
-import os
+import json
+import re
+from urllib.parse import urlparse
 
 from servant.sdk import Tier, ToolError, tool
 
@@ -246,3 +256,196 @@ def _chrome_path() -> str | None:
         if found:
             return found
     return None
+
+
+# --------------------------------------------------------------------------
+# The lightweight loop
+# --------------------------------------------------------------------------
+
+EXTRACT_JS = """() => {
+  const out = [];
+  const nodes = document.querySelectorAll('a,button,input,textarea,select,[role=button]');
+  for (const n of nodes) {
+    if (out.length >= 40) break;
+    const r = n.getBoundingClientRect();
+    if (r.width === 0 || r.height === 0) continue;          // skip hidden
+    const label = (n.innerText || n.value || n.placeholder ||
+                   n.getAttribute('aria-label') || n.name || '').trim().slice(0, 60);
+    if (!label && n.tagName !== 'INPUT') continue;
+    out.push({
+      tag: n.tagName.toLowerCase(),
+      type: n.type || '',
+      label: label,
+      href: (n.getAttribute('href') || '').slice(0, 80),
+    });
+  }
+  return {
+    elements: out,
+    text: (document.body.innerText || '').replace(/\\s+/g, ' ').trim().slice(0, 700),
+  };
+}"""
+
+ACTION_RULES = """Reply with ONE JSON object and nothing else:
+{"action":"click","index":N}
+{"action":"type","index":N,"text":"..."}
+{"action":"goto","url":"https://..."}
+{"action":"scroll"}
+{"action":"done","answer":"what you found, or why you stopped"}
+Pick "done" as soon as the task is answered. Do not explain."""
+
+
+def _describe(page) -> tuple[str, list]:
+    """Compact page state. Every token here is paid for on every single step."""
+    data = page.evaluate(EXTRACT_JS)
+    elements = data.get("elements", [])
+    lines = [f"URL: {page.url}", f"TITLE: {page.title()[:80]}", "ELEMENTS:"]
+    for index, element in enumerate(elements):
+        bits = f"[{index}] {element['tag']}"
+        if element.get("type"):
+            bits += f":{element['type']}"
+        if element.get("label"):
+            bits += f' "{element["label"]}"'
+        if element.get("href"):
+            bits += f" -> {element['href']}"
+        lines.append(bits)
+    lines.append(f"TEXT: {data.get('text', '')}")
+    return "\n".join(lines), elements
+
+
+def _decide(ctx, task: str, state: str, history: list[str]) -> dict:
+    recent = "\n".join(history[-3:])
+    prompt = (
+        f"You are operating a web browser to finish this task.\nTASK: {task}\n\n"
+        + (f"ALREADY DONE:\n{recent}\n\n" if recent else "")
+        + f"CURRENT PAGE:\n{state}\n\n{ACTION_RULES}"
+    )
+    raw = ctx.think(prompt)
+    match = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not match:
+        raise ToolError(f"the model did not return an action: {raw[:200]}")
+    try:
+        return json.loads(match.group(0))
+    except json.JSONDecodeError as exc:
+        raise ToolError(f"unparseable action {match.group(0)[:200]}: {exc}") from exc
+
+
+def _host_allowed(url: str, domains: list[str]) -> bool:
+    if not domains:
+        return True
+    host = (urlparse(url).hostname or "").lower()
+    return any(host == d.lower() or host.endswith("." + d.lower()) for d in domains)
+
+
+@tool(
+    name="browser.browse",
+    tier=Tier.DANGER,
+    params={
+        "task": "What to find or do, in plain English",
+        "start_url": "The page to open first",
+        "allowed_domains": "Comma-separated domains it may visit. Empty means anywhere.",
+        "max_steps": "Most actions before giving up (1-20)",
+        "headless": "True to hide the browser, False to watch it work",
+    },
+    undo="depends what it did -- check the sites it visited",
+)
+def browser_browse(
+    ctx,
+    task: str,
+    start_url: str,
+    allowed_domains: str = "",
+    max_steps: int = 8,
+    headless: bool = True,
+) -> str:
+    """Browse the web to answer a question. Cheap enough for a small token budget.
+
+    Use this instead of browser.task when the token ceiling matters. It sends a
+    compact page summary -- roughly 1k tokens a step against browser.task's 8k+
+    -- so it fits inside a free-tier per-minute allowance.
+    """
+    if not task.strip():
+        raise ToolError("task is empty")
+    if not start_url.lower().startswith(("http://", "https://")):
+        raise ToolError(f"start_url must be http(s), got {start_url!r}")
+    if not 1 <= max_steps <= 20:
+        raise ToolError("max_steps must be between 1 and 20")
+
+    try:
+        from playwright.sync_api import TimeoutError as PWTimeout, sync_playwright
+    except ImportError as exc:
+        raise ToolError("playwright is not installed. pip install playwright") from exc
+
+    domains = _split(allowed_domains)
+    if not domains:
+        ctx.log("WARNING: no allowed_domains -- this browser can navigate anywhere")
+    if not _host_allowed(start_url, domains):
+        raise ToolError(f"{start_url} is outside allowed_domains ({', '.join(domains)})")
+
+    history: list[str] = []
+    answer = ""
+
+    with sync_playwright() as driver:
+        browser = driver.chromium.launch(channel="chrome", headless=bool(headless))
+        page = browser.new_page()
+        try:
+            page.goto(start_url, timeout=25000, wait_until="domcontentloaded")
+
+            for step in range(1, max_steps + 1):
+                # The kill switch is checked between every step, so a long
+                # browse stops the same way everything else does.
+                ctx.killswitch_check()
+
+                state, elements = _describe(page)
+                action = _decide(ctx, task, state, history)
+                kind = str(action.get("action", "")).lower()
+
+                if kind == "done":
+                    answer = str(action.get("answer", "")).strip()
+                    history.append(f"step {step}: done")
+                    break
+
+                if kind == "goto":
+                    url = str(action.get("url", ""))
+                    if not _host_allowed(url, domains):
+                        history.append(f"step {step}: REFUSED {url} (outside allowed_domains)")
+                        continue
+                    page.goto(url, timeout=25000, wait_until="domcontentloaded")
+                    history.append(f"step {step}: went to {url}")
+
+                elif kind in {"click", "type"}:
+                    index = int(action.get("index", -1))
+                    if not 0 <= index < len(elements):
+                        history.append(f"step {step}: no element [{index}]")
+                        continue
+                    handle = page.query_selector_all(
+                        "a,button,input,textarea,select,[role=button]"
+                    )[index]
+                    if kind == "click":
+                        handle.click(timeout=10000)
+                        history.append(f"step {step}: clicked [{index}]")
+                    else:
+                        handle.fill(str(action.get("text", "")), timeout=10000)
+                        history.append(f"step {step}: typed into [{index}]")
+                    page.wait_for_timeout(1200)
+
+                elif kind == "scroll":
+                    page.mouse.wheel(0, 900)
+                    history.append(f"step {step}: scrolled")
+
+                else:
+                    history.append(f"step {step}: unknown action {kind!r}")
+
+                if not _host_allowed(page.url, domains):
+                    history.append(f"step {step}: left the allowed domains -- going back")
+                    page.go_back(timeout=15000)
+
+        except PWTimeout as exc:
+            raise ToolError(f"the page timed out: {str(exc)[:200]}") from exc
+        finally:
+            browser.close()
+
+    trail = "\n".join(f"  {line}" for line in history)
+    if answer:
+        return ctx.scrub(f"{answer}\n\nsteps taken:\n{trail}")
+    return ctx.scrub(
+        f"stopped after {len(history)} step(s) without a final answer.\n\nsteps taken:\n{trail}"
+    )

@@ -57,11 +57,12 @@ Verified live on Groq (their model list changes — re-check before a demo):
 `groq/compound*` (the models with built-in web search) return **413** on this
 account's tier, so `web.search` uses a separate backend:
 
-- **Google Programmable Search** — free, 100 queries/day. Needs `GOOGLE_API_KEY`
-  **and** `GOOGLE_CSE_ID` in `.env`; the key alone cannot search the web. Make
-  the engine free at [programmablesearchengine.google.com](https://programmablesearchengine.google.com/).
-- **DuckDuckGo** — no key at all, but it blocks datacenter IPs and changes its
-  markup without warning. Unverified; try `backend=duckduckgo` locally.
+- **DuckDuckGo via `ddgs`** (default) — no key, no signup, no quota, searches
+  the whole web. This is what `web.search` uses unless you ask for otherwise.
+- **Google Programmable Search** — 100 queries/day free, but Google has
+  **deprecated "Search the entire web"**, so a new engine only searches sites
+  you list. Useful for `backend=google` against one specific site; not a
+  general web search any more.
 
 ---
 
@@ -191,7 +192,7 @@ you keep the sending, spending and deleting.**
 | Mail | `mail.list` `mail.read` | READ |
 | Mail | `mail.draft` `mail.archive` | WRITE |
 | Mail | `mail.send` | **DANGER** |
-| Browser | `browser.task` | **DANGER** |
+| Browser | `browser.browse` (light) `browser.task` (browser-use) | **DANGER** |
 | **Self-extension** | `skill.acquire` `skill.list` `skill.inspect` `skill.test` | WRITE / READ |
 | **Self-extension** | `skill.install` | **DANGER** |
 
@@ -316,12 +317,21 @@ restore), `organize.*` (dry-run plan, then approved apply), `git.*`, `code.*`
 **Mail** works over IMAP/SMTP with a Gmail app password -- no OAuth flow, no
 Cloud project, standard library only. `mail.send` is DANGER and stays there.
 
-**Browser** works via browser-use driving real Chrome over CDP (no Playwright,
-and it sidesteps Wayland's input restrictions). One caveat worth knowing
-before you demo it: browser-use sends a large system prompt plus the page's
-element tree every step, and Groq's free tier allows 8,000 tokens per minute,
-so a single step can eat the whole minute. It works, slowly and with retries.
-See the TOKEN BUDGET note in `features/browser.py`.
+**Browser** comes in two sizes, because token budget decides which is usable:
+
+| | tokens/step | a simple page | use when |
+|---|---|---|---|
+| `browser.browse` | ~1k | **~1.6s** | almost always |
+| `browser.task` | 8k+ | ~16s, with 413s | complex sites, bigger tier |
+
+`browser.browse` is a small loop: a compact page summary plus five actions
+(click, type, goto, scroll, done). It drives your installed Chrome through
+Playwright, and it calls the model through `ctx.think`, so it inherits key
+rotation and redaction. `browser.task` is full browser-use — more capable, but
+it sends a large system prompt plus the whole element tree every step, which
+does not fit in a free tier's 8,000 tokens per minute.
+
+Both take `allowed_domains`, which is enforced on every navigation.
 
 Not built, on purpose: semantic memory, sandboxing, LangGraph orchestration,
 desktop GUI automation. See the deliberate-omissions section of

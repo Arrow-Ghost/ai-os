@@ -27,6 +27,7 @@ class Context:
         executor=None,
         redactor=None,
         registry=None,
+        killswitch=None,
         quiet: bool = False,
     ):
         self.run_id = run_id
@@ -41,6 +42,7 @@ class Context:
         self._brain = brain
         self._executor = executor
         self._redactor = redactor
+        self._killswitch = killswitch
         self._quiet = quiet
 
     # -- talking to the human ---------------------------------------------
@@ -94,6 +96,17 @@ class Context:
         return self._executor.run(tool_name, args, ctx=self, rationale=f"called by {tool_name}")
 
     # -- safety helpers ----------------------------------------------------
+    def killswitch_check(self) -> None:
+        """Raise Stopped if the operator has hit stop.
+
+        The executor already checks this before your tool starts. Call it
+        yourself inside any loop that runs for a while -- a browse, a batch, a
+        long download -- so a stop takes effect during the tool, not after it.
+        """
+        if self._killswitch is not None:
+            self._killswitch.check()
+
+
     def check_path(self, path: "str | Path") -> Path:
         """Resolve a user-supplied path, refusing anything policy forbids.
 

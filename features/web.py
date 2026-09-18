@@ -4,26 +4,23 @@ Reading the web.
 Stdlib only -- urllib plus a small HTML-to-text pass. No requests, no
 BeautifulSoup, nothing to install.
 
-web.search has two backends and picks whichever is configured:
+web.search has two backends:
 
-  google  Google Programmable Search (Custom Search JSON API). Best quality.
-          Free tier is 100 queries/day. Needs BOTH GOOGLE_API_KEY and
-          GOOGLE_CSE_ID in .env -- the key alone is not enough, because the
-          API has no concept of "the whole web" without a search engine id.
-          Make one free at https://programmablesearchengine.google.com/
-          (create an engine, switch on "Search the entire web", copy the
-          "Search engine ID").
+  ddg (default)  The `ddgs` package. No key, no signup, no quota. It handles
+          DuckDuckGo's anti-scraping behaviour for you, which hand-rolled
+          HTML parsing does not -- DuckDuckGo serves a landing page to a
+          plain GET. Verified working.
 
-  duckduckgo  No key, no signup, no quota. Parses the HTML results page.
-          UNVERIFIED: DuckDuckGo blocks datacenter IPs outright (it serves a
-          landing page instead of results), so this could not be tested from
-          a sandbox. It may work fine from a home connection -- try
-          `backend=duckduckgo` on your own machine. The parser logic is
-          unit-tested against a markup fixture either way. Treat it as a
-          bonus, not something to build a demo on.
+  google  Google Programmable Search (Custom Search JSON API), 100 queries a
+          day free. Needs BOTH GOOGLE_API_KEY and GOOGLE_CSE_ID.
+          NOTE: Google has DEPRECATED the "Search the entire web" option, so
+          new engines are restricted to whatever sites you list. That makes
+          this backend useful for searching specific sites you name, and not
+          a general web search any more. Use it for "search the Python docs",
+          not "search the web".
 
 Groq's `groq/compound` models advertise built-in web search but return 413 on
-this account's tier, so they are not an option here.
+this tier, so they are not an option here.
 """
 
 from __future__ import annotations
@@ -129,50 +126,6 @@ def web_fetch(ctx, url: str, max_chars: int = 6000, raw: bool = False) -> str:
 # Search
 # --------------------------------------------------------------------------
 
-class _DuckDuckGoParser(HTMLParser):
-    """Pull (title, url, snippet) triples out of DuckDuckGo's HTML page."""
-
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.results: list[dict] = []
-        self._mode: str | None = None
-        self._current: dict = {}
-
-    def handle_starttag(self, tag, attrs):
-        if tag != "a" and tag != "div":
-            return
-        classes = dict(attrs).get("class", "") or ""
-        if tag == "a" and ("result__a" in classes or "result-link" in classes):
-            self._mode = "title"
-            self._current = {"url": _clean_ddg_url(dict(attrs).get("href", "")), "title": "", "snippet": ""}
-        elif "result__snippet" in classes:
-            self._mode = "snippet"
-
-    def handle_endtag(self, tag):
-        if self._mode == "title" and tag == "a":
-            self._mode = None
-        elif self._mode == "snippet" and tag in {"a", "div"}:
-            if self._current:
-                self.results.append(self._current)
-                self._current = {}
-            self._mode = None
-
-    def handle_data(self, data):
-        if self._mode and self._current:
-            self._current[self._mode if self._mode != "title" else "title"] += data.strip() + " "
-
-
-def _clean_ddg_url(href: str) -> str:
-    """DuckDuckGo wraps results in /l/?uddg=<encoded>. Unwrap it."""
-    import urllib.parse
-
-    if "uddg=" not in href:
-        return href
-    query = urllib.parse.urlparse(href).query
-    target = urllib.parse.parse_qs(query).get("uddg", [""])[0]
-    return target or href
-
-
 def _search_google(ctx, query: str, max_results: int) -> list[dict]:
     import json
     import urllib.parse
@@ -203,38 +156,31 @@ def _search_google(ctx, query: str, max_results: int) -> list[dict]:
     ]
 
 
-def _search_duckduckgo(ctx, query: str, max_results: int) -> list[dict]:  # noqa: ARG001
-    import urllib.parse
-
-    url = "https://html.duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})
-    request = urllib.request.Request(
-        url, headers={"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) servant/0.1"}
-    )
+def _search_ddg(ctx, query: str, max_results: int) -> list[dict]:  # noqa: ARG001
+    """DuckDuckGo via the ddgs package -- no key, no quota."""
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
-            html = response.read(MAX_BYTES).decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
+        from ddgs import DDGS
+    except ImportError as exc:
         raise ToolError(
-            f"DuckDuckGo returned HTTP {exc.code}. It rate-limits aggressively; "
-            "add GOOGLE_CSE_ID to .env for a quota-backed backend."
+            "the ddgs package is not installed. pip install ddgs -- it is the "
+            "keyless search backend and needs no signup."
         ) from exc
 
-    parser = _DuckDuckGoParser()
-    parser.feed(html)
-
-    if not parser.results and "result__a" not in html and "result-link" not in html:
-        # No result markup at all means we were served the landing/block page,
-        # which is a very different thing from "this query has no hits".
+    try:
+        rows = list(DDGS().text(query, max_results=max_results))
+    except Exception as exc:  # noqa: BLE001 -- ddgs raises a range of network errors
         raise ToolError(
-            "DuckDuckGo served a page with no results in it -- it blocks "
-            "datacenter IPs and non-browser clients, and it changes its markup "
-            "without warning. Use the google backend instead: add GOOGLE_CSE_ID "
-            "to .env (free, 1 minute, https://programmablesearchengine.google.com/)."
-        )
+            f"DuckDuckGo search failed: {type(exc).__name__}: {str(exc)[:200]}. "
+            f"It rate-limits bursts; wait a moment and retry."
+        ) from exc
 
     return [
-        {k: " ".join(v.split()) for k, v in r.items()}
-        for r in parser.results[:max_results]
+        {
+            "title": row.get("title", ""),
+            "url": row.get("href", "") or row.get("link", ""),
+            "snippet": row.get("body", "") or row.get("snippet", ""),
+        }
+        for row in rows
     ]
 
 
@@ -244,7 +190,7 @@ def _search_duckduckgo(ctx, query: str, max_results: int) -> list[dict]:  # noqa
     params={
         "query": "What to search for",
         "max_results": "How many results to return (1-10)",
-        "backend": "auto | google | duckduckgo",
+        "backend": "auto | ddg | google",
     },
 )
 def web_search(ctx, query: str, max_results: int = 5, backend: str = "auto") -> str:
@@ -253,22 +199,23 @@ def web_search(ctx, query: str, max_results: int = 5, backend: str = "auto") -> 
         raise ToolError("query is empty")
     max_results = max(1, min(int(max_results), 10))
 
-    has_google = bool(ctx.secret("GOOGLE_API_KEY") and ctx.secret("GOOGLE_CSE_ID"))
     if backend == "auto":
-        backend = "google" if has_google else "duckduckgo"
+        # ddg by default: it is keyless, unmetered, and searches the whole web,
+        # which Google's Programmable Search no longer does for new engines.
+        backend = "ddg"
 
-    if backend == "google":
-        if not has_google:
+    if backend == "ddg":
+        results = _search_ddg(ctx, query, max_results)
+    elif backend == "google":
+        if not (ctx.secret("GOOGLE_API_KEY") and ctx.secret("GOOGLE_CSE_ID")):
             raise ToolError(
                 "backend=google needs BOTH GOOGLE_API_KEY and GOOGLE_CSE_ID in .env. "
-                "Make a free search engine at https://programmablesearchengine.google.com/ "
-                "and copy its Search engine ID."
+                "Note it can only search sites listed in that engine -- Google has "
+                "deprecated 'Search the entire web'. Use backend=ddg for the open web."
             )
         results = _search_google(ctx, query, max_results)
-    elif backend == "duckduckgo":
-        results = _search_duckduckgo(ctx, query, max_results)
     else:
-        raise ToolError(f"backend must be auto, google or duckduckgo -- got {backend!r}")
+        raise ToolError(f"backend must be auto, ddg or google -- got {backend!r}")
 
     if not results:
         return f"no results for {query!r} (via {backend})"

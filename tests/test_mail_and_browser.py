@@ -145,3 +145,67 @@ def test_browser_secrets_must_name_an_env_var(yes_agent, feature, monkeypatch):
     )
     assert result.status is Status.ERROR
     assert "NOT_SET_ANYWHERE" in result.error
+
+
+# -- the lightweight browser ---------------------------------------------
+
+def test_browse_tier_is_danger(feature):
+    from servant.registry import REGISTRY
+
+    feature("browser")
+    assert REGISTRY.get("browser.browse").tier is Tier.DANGER
+
+
+@pytest.mark.parametrize("url,domains,allowed", [
+    ("https://github.com/x", ["github.com"], True),
+    ("https://api.github.com/x", ["github.com"], True),      # subdomain
+    ("https://evil.com/x", ["github.com"], False),
+    ("https://notgithub.com/x", ["github.com"], False),      # suffix trick
+    ("https://github.com.evil.com", ["github.com"], False),  # prefix trick
+    ("https://anything.org", [], True),                      # empty = anywhere
+])
+def test_domain_allowlist(feature, url, domains, allowed):
+    """The allowlist is the seatbelt -- suffix and prefix tricks must not slip past."""
+    mod = feature("browser")
+    assert mod._host_allowed(url, domains) is allowed
+
+
+def test_browse_refuses_a_start_url_outside_the_allowlist(yes_agent, feature):
+    feature("browser")
+    result = yes_agent.call_tool("browser.browse", {
+        "task": "look at something", "start_url": "https://evil.com",
+        "allowed_domains": "github.com",
+    })
+    assert result.status is Status.ERROR
+    assert "outside allowed_domains" in result.error
+
+
+def test_browse_rejects_non_http_start(yes_agent, feature):
+    feature("browser")
+    result = yes_agent.call_tool("browser.browse", {
+        "task": "read it", "start_url": "file:///etc/passwd",
+    })
+    assert result.status is Status.ERROR
+    assert "http" in result.error
+
+
+def test_action_json_is_parsed_out_of_surrounding_prose(feature):
+    """Small models wrap JSON in commentary however firmly you ask them not to."""
+    mod = feature("browser")
+
+    class Ctx:
+        def think(self, prompt, smart=False):
+            return 'Sure! Here is the action:\n```json\n{"action":"click","index":3}\n```'
+
+    assert mod._decide(Ctx(), "task", "state", []) == {"action": "click", "index": 3}
+
+
+def test_unparseable_action_is_an_explicit_error(feature):
+    mod = feature("browser")
+
+    class Ctx:
+        def think(self, prompt, smart=False):
+            return "I am not going to give you JSON today"
+
+    with pytest.raises(Exception, match="did not return an action"):
+        mod._decide(Ctx(), "task", "state", [])
