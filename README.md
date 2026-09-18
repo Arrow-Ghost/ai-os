@@ -120,6 +120,8 @@ Still active in this mode, because none of it blocks anything:
 | forbidden paths | `~/.ssh`, `~/.aws`, `.env` stay unreadable |
 | budgets | a run still stops after `max_steps` |
 | `FORBIDDEN` tier | the one slot that survives full access |
+| `always_ask` | `skill.install` asks whatever the tier policy says |
+| generated-code gate | **code the agent wrote for itself always asks**, even here |
 
 To keep one specific tool asking while everything else runs free, pin it in
 `config/policy.full-access.yaml`:
@@ -129,6 +131,24 @@ governance:
   tier_overrides:
     files.trash: forbidden
     skill.install: forbidden
+```
+
+### The one thing full access does not open
+
+With `danger: auto` *and* self-extension on, there would otherwise be a
+compound risk: the agent writes a tool and runs it in the same turn, without a
+human ever seeing the code. That specific combination stays closed.
+
+Tools are marked as generated from the provenance header `skill.acquire`
+stamps into every file it writes, so governance can recognise self-written
+code without trusting anything the code says about itself. Those tools ask
+before every run, whatever the tier policy says.
+
+It is still your switch, just a named one:
+
+```yaml
+governance:
+  generated_code_always_asks: false   # the most consequential line in this file
 ```
 
 The difference between the cautious profile and this one is four words in a

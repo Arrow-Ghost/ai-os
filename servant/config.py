@@ -52,6 +52,12 @@ DEFAULT_POLICY: dict[str, Any] = {
         "tier_overrides": {},
         # Tools that may never run, by name.
         "denylist": [],
+        # Tools that ask even when their tier would run automatically.
+        "always_ask": ["skill.install"],
+        # Code the agent wrote for itself always asks before running, even
+        # under full access. This closes the one compound risk: writing a
+        # tool and running it in the same turn, unseen.
+        "generated_code_always_asks": True,
         # Below this confidence the brain must ask even for "auto" tiers.
         "confidence_floor": 0.35,
         "killswitch_file": ".servant/STOP",

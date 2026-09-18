@@ -37,6 +37,21 @@ governance:
   # Tools that must never run, by name. Highest priority of all.
   denylist: []
 
+  # Tools that ask even when their tier would otherwise run automatically.
+  # This survives full access.
+  always_ask:
+    - skill.install
+
+  # Code the agent WROTE FOR ITSELF always asks before it runs, whatever the
+  # tier policy says. This closes the one compound risk in full-access mode:
+  # writing a tool and running it in the same turn, without a human ever
+  # seeing the code.
+  #
+  # Set this to false only if you have decided you do not need to see what
+  # the agent writes before it runs. It is the single most consequential
+  # switch in this file.
+  generated_code_always_asks: true
+
   # Even an "auto" tier asks for a human below this confidence.
   confidence_floor: 0.35
 

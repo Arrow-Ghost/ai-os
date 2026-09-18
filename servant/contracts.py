@@ -76,6 +76,10 @@ class ToolSpec:
     module: str
     undo: str | None = None          # human-readable "how do I undo this?"
     examples: tuple[str, ...] = ()
+    #: True when this tool came from a module the agent wrote for itself.
+    #: Governance treats these differently, and deliberately cannot be talked
+    #: out of it by a permissive tier policy.
+    generated: bool = False
 
     def to_openai_schema(self) -> dict:
         """The shape the LLM sees. OpenAI/Groq function-calling format."""

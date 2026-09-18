@@ -89,7 +89,7 @@ The pipeline:
   skill.install   [DANGER -- asks every time] -> features/
 ```
 
-Three properties do the work:
+Four properties do the work:
 
 1. **Tier floor.** Generated tools are pinned to `DANGER`, so anything the
    agent taught itself asks a human before it runs. The validator rejects any
@@ -100,7 +100,15 @@ Three properties do the work:
    not read. Generated code is inert until a human promotes it.
 3. **Sandbox.** Drafts execute only in a limited subprocess with a stub
    context — no real memory, no brain, no credentials, CPU/memory/file-size
-   capped.
+   capped. A draft is tested from a `.pending` file and only reaches the
+   quarantine folder if it passes, with the verdict stamped into its header.
+   `skill.install` refuses anything carrying no record of a passing run, so a
+   file dropped into quarantine by hand is not installable.
+4. **The generated-code gate.** Self-written tools ask before every run even
+   under `--full-access`, because otherwise the agent could write a tool and
+   run it in the same turn unseen. Governance identifies them from the
+   provenance header, not from anything the tool claims about itself. Turning
+   this off is one named line in policy: `generated_code_always_asks: false`.
 
 ### What the sandbox is not
 
