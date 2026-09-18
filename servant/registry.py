@@ -1,0 +1,153 @@
+"""
+The tool registry.
+
+Feature authors never touch this file -- they use the @tool decorator from
+`servant.sdk`, which lands here. The registry is what the brain sees, what the
+CLI lists, and what the executor looks up. One source of truth.
+"""
+
+from __future__ import annotations
+
+import inspect
+from typing import Any, Callable, Iterable
+
+from .contracts import ParamSpec, Tier, ToolSpec
+
+_PY_TO_JSON = {
+    "str": "string",
+    "int": "integer",
+    "float": "number",
+    "bool": "boolean",
+    "list": "array",
+    "dict": "object",
+}
+
+
+def _json_type(annotation: Any) -> str:
+    """Map a python annotation to a JSON-schema type.
+
+    Handles both real types and strings, because a feature module using
+    `from __future__ import annotations` hands us `"int"`, not `int`.
+    """
+    if annotation is inspect.Parameter.empty:
+        return "string"
+
+    name = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
+    name = str(name).strip()
+
+    # Unwrap the common optional spellings: "int | None", "Optional[int]".
+    if "|" in name:
+        parts = [p.strip() for p in name.split("|") if p.strip().lower() not in {"none", "nonetype"}]
+        name = parts[0] if parts else "str"
+    if name.lower().startswith("optional[") and name.endswith("]"):
+        name = name[len("optional["):-1].strip()
+    name = name.split("[", 1)[0]  # list[str] -> list
+
+    return _PY_TO_JSON.get(name, "string")
+
+
+class ToolRegistry:
+    def __init__(self) -> None:
+        self._tools: dict[str, ToolSpec] = {}
+
+    # -- registration ------------------------------------------------------
+    def add(self, spec: ToolSpec, *, replace: bool = False) -> ToolSpec:
+        if spec.name in self._tools and not replace:
+            existing = self._tools[spec.name]
+            raise ValueError(
+                f"tool name '{spec.name}' is already registered by {existing.module}. "
+                f"Pick a unique name (convention: <area>.<verb>, e.g. 'files.move')."
+            )
+        self._tools[spec.name] = spec
+        return spec
+
+    # -- lookup ------------------------------------------------------------
+    def get(self, name: str) -> ToolSpec | None:
+        return self._tools.get(name)
+
+    def all(self) -> list[ToolSpec]:
+        return sorted(self._tools.values(), key=lambda s: s.name)
+
+    def by_tier(self, tier: Tier) -> list[ToolSpec]:
+        return [s for s in self.all() if s.tier is tier]
+
+    def names(self) -> list[str]:
+        return sorted(self._tools)
+
+    def openai_schemas(self, only: Iterable[str] | None = None) -> list[dict]:
+        allowed = set(only) if only is not None else None
+        return [s.to_openai_schema() for s in self.all() if allowed is None or s.name in allowed]
+
+    def clear(self) -> None:
+        """Test helper. Do not call at runtime."""
+        self._tools.clear()
+
+    def __len__(self) -> int:
+        return len(self._tools)
+
+    def __contains__(self, name: object) -> bool:
+        return name in self._tools
+
+
+#: The one registry every feature registers into.
+REGISTRY = ToolRegistry()
+
+
+def build_spec(
+    func: Callable[..., Any],
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    tier: Tier = Tier.READ,
+    params: dict[str, str] | None = None,
+    undo: str | None = None,
+    examples: Iterable[str] = (),
+) -> ToolSpec:
+    """Turn a plain python function into a ToolSpec by reading its signature.
+
+    The first parameter is always the Context and is hidden from the LLM.
+    """
+    sig = inspect.signature(func)
+    positional = list(sig.parameters.values())
+
+    if not positional or positional[0].name not in {"ctx", "context", "_ctx"}:
+        raise TypeError(
+            f"{func.__module__}.{func.__name__}: the first argument of a tool must be "
+            f"'ctx' (the Context). Signature was {sig}."
+        )
+
+    descriptions = params or {}
+    specs: list[ParamSpec] = []
+    for p in positional[1:]:
+        if p.kind in (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD):
+            raise TypeError(
+                f"{func.__module__}.{func.__name__}: *args/**kwargs are not supported in tools. "
+                f"Declare explicit named arguments so the LLM knows what to pass."
+            )
+        json_type = _json_type(p.annotation)
+        has_default = p.default is not inspect.Parameter.empty
+        specs.append(
+            ParamSpec(
+                name=p.name,
+                type=json_type,
+                description=descriptions.get(p.name, ""),
+                required=not has_default,
+                default=None if not has_default else p.default,
+            )
+        )
+
+    doc = inspect.getdoc(func) or ""
+    final_description = (description or doc.split("\n\n")[0] or func.__name__).strip()
+    if not final_description:
+        raise ValueError(f"{func.__name__} needs a description (docstring or description=).")
+
+    return ToolSpec(
+        name=name or func.__name__.replace("_", "."),
+        description=final_description,
+        tier=tier,
+        params=tuple(specs),
+        func=func,
+        module=func.__module__,
+        undo=undo,
+        examples=tuple(examples),
+    )

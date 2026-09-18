@@ -1,0 +1,66 @@
+# =====================================================================
+#  Owner policy. YOU edit this file. The agent only ever reads it.
+#
+#  Anything you leave out falls back to DEFAULT_POLICY in servant/config.py.
+#  Changing a rule here takes effect on the next run -- the agent has no
+#  mechanism to preserve an old policy against your edit, and that is
+#  deliberate. Correctability beats goal-content integrity.
+# =====================================================================
+
+brain:
+  # "offline" needs no API key and returns scripted answers -- use it while
+  # building features. Switch to "groq" when you want real reasoning.
+  provider: offline
+  base_url: https://api.groq.com/openai/v1
+  model_fast: openai/gpt-oss-20b      # routing, classification, short steps
+  model_smart: openai/gpt-oss-120b    # planning and anything that needs care
+  temperature: 0.2
+  max_retries: 3                      # Groq rate-limits hard; we back off
+
+governance:
+  # What happens for each tier. auto | approve | block
+  tier_policy:
+    read: auto
+    write: auto
+    danger: approve
+    forbidden: block
+
+  # Force a specific tool to a tier, whatever its author declared.
+  # Your override always wins. Examples:
+  #   files.trash: danger
+  #   notes.save: approve      # <- not a tier; use a tier name here
+  tier_overrides: {}
+
+  # Tools that must never run, by name. Highest priority of all.
+  denylist: []
+
+  # Even an "auto" tier asks for a human below this confidence.
+  confidence_floor: 0.35
+
+  killswitch_file: .servant/STOP
+
+budgets:
+  max_steps: 12          # tool calls in one run
+  max_llm_calls: 20      # brain turns in one run
+  max_seconds: 300
+  max_spend_usd: 0.0     # hard zero. The agent never spends money. Ever.
+
+redaction:
+  enabled: true
+  patterns:
+    - 'sk-[A-Za-z0-9_\-]{16,}'
+    - 'gsk_[A-Za-z0-9_\-]{16,}'
+    - 'AKIA[0-9A-Z]{16}'
+    - 'ghp_[A-Za-z0-9]{36}'
+    - '(?i)\b(api[_-]?key|secret|password|passwd|token)\b\s*[:=]\s*\S+'
+  forbidden_paths:
+    - ~/.ssh
+    - ~/.aws
+    - ~/.gnupg
+    - .env
+
+paths:
+  state_dir: .servant
+  audit_log: .servant/audit.jsonl
+  memory_db: .servant/memory.db
+  features_dir: features

@@ -1,0 +1,21 @@
+# The framework itself runs on the standard library alone.
+# `git clone && python -m servant tools` works with none of this installed.
+
+# --- needed to edit policy.yaml (otherwise defaults are used) ---
+PyYAML>=6.0
+
+# --- needed for brain.provider: groq ---
+openai>=1.40.0
+
+# --- tests ---
+pytest>=8.0
+
+# --- add per feature, not up front -------------------------------------
+# Pin versions when you add these; several move fast.
+#   browser-use>=0.1.40     browser control (LLM-driven, Playwright underneath)
+#   playwright>=1.47        installed by browser-use
+#   mss>=9.0                screenshots
+#   watchdog>=4.0           filesystem events
+#   psutil>=6.0             process and system state
+#   apscheduler>=3.10       scheduled and recurring jobs
+#   faster-whisper>=1.0     speech to text, runs on your GPU
